@@ -14,9 +14,9 @@ Först skapas ett *Key Pair* som används för att ansluta till servern via *SSH
 
 ![alt text](images/key_pair.png)
 
-Script *V42_novatrix-ec2.sh* skapar upp en *EC2*-instans, webbsida och webbsidans innehåll.
+Script *V42_novatrix-ec2.sh* skapar upp en *EC2*-instans, skickar med *user data* som installerar *Apache* och skapar webbsidan.
 
-Script *V42_novatrix-ec2.sh* skapar även *Security Group* *novatrix-web-sg* som har inställningar för att öppna *SSH* / port 22 endast för min dators IP-adress och port 80 för inkommande trafik till *Novatrix* hemsida.
+Script *V42_novatrix-ec2.sh* skapar även *Security Group* *novatrix-web-sg* som har inställningar för att öppna *SSH* / port 22 endast för min publika IP-adress och port 80 för inkommande trafik till *Novatrix* hemsida.
 
 Script *V42_novatrix-ec2.sh*:
 
@@ -288,6 +288,7 @@ Den varnar (via e-post) för följande:
 |---|---|
 | EC2 `t3.micro` | Free tier-berättigad |
 | EBS 8 GiB gp3 | Inom free tier |
+| Publik IPv4 | Ingår i free tier (750 h/månad), annars 0,005 USD/h |
 | Rekommendation | Avsluta instansen när den inte används |
 
 ### Begränsningar (avgränsat i uppgiften)
