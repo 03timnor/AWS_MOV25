@@ -191,6 +191,8 @@ echo "  SSH:     ssh -i $KEY_FILE ec2-user@$PUBLIC_IP"
 echo
 echo "Clean up when you are finished:"
 echo "  aws ec2 terminate-instances --region $REGION --instance-ids $INSTANCE_ID"
+echo "  aws ec2 wait instance-terminated --region $REGION --instance-ids $INSTANCE_ID"
+echo "  aws ec2 delete-security-group --region $REGION --group-name $SG_NAME"
 ```
 
 För att köra scriptet *V42_novatrix-ec2.sh*:
@@ -304,6 +306,7 @@ Den varnar (via e-post) för följande:
 
 ```bash
 aws ec2 terminate-instances --region eu-north-1 --instance-ids <instans-id>
+aws ec2 wait instance-terminated --region eu-north-1 --instance-ids <instans-id>
 aws ec2 delete-security-group --region eu-north-1 --group-name novatrix-web-sg
 ```
 
