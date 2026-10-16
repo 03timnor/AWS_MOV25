@@ -1,4 +1,4 @@
-# *__Repository för AWS kursen__*
+# *__Repository för AWS-kursen__*
 
 #### *Tim Noreliusson Lingestedt*
 

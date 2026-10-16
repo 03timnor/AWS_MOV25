@@ -6,15 +6,15 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 Uppgiften går ut på att provisionera en EC2-instans och konfigurera en webbserver åt *Novatrix* i *AWS*.
 
-För att uppnå Väl Godkänt nivå skall detta göras automatiserat med kod.
+För att uppnå nivå Väl Godkänt skall detta göras automatiserat med kod.
 
 ## *__1. Provisionera en EC2-instans och konfigurera en webbserver__*
 
-Först skapas ett *Key Pair* upp som används för att ansluta till servern via *SSH* / port 22. Detta görs via *AWS* portalen. Om inte nyckeln läcker ut så kan man använda samma par under hela *AWS* kursen. Nyckelparet består av en publik nyckel som finns hos *AWS* och en privat som finns på min dator.
+Först skapas ett *Key Pair* som används för att ansluta till servern via *SSH* / port 22. Detta görs via *AWS* portalen. Om inte nyckeln läcker ut så kan man använda samma par under hela *AWS*-kursen. Nyckelparet består av en publik nyckel som finns hos *AWS* och en privat som finns på min dator.
 
 ![alt text](images/key_pair.png)
 
-Script *V42_novatrix-ec2.sh* skapar upp en *EC2* instans, webbsida och webbsidans innehåll.
+Script *V42_novatrix-ec2.sh* skapar upp en *EC2*-instans, webbsida och webbsidans innehåll.
 
 Script *V42_novatrix-ec2.sh* skapar även *Security Group* *novatrix-web-sg* som har inställningar för att öppna *SSH* / port 22 endast för min dators IP-adress och port 80 för inkommande trafik till *Novatrix* hemsida.
 
@@ -201,7 +201,7 @@ bash V42_novatrix-ec2.sh
 
 ## *__2. Månadsbudget__*
 
-Månadsbudget är konfigurerad i *AWS* portalen:
+Månadsbudget är konfigurerad i *AWS*-portalen:
 
 ![alt text](images/budget.png)
 
@@ -308,7 +308,7 @@ aws ec2 delete-security-group --region eu-north-1 --group-name novatrix-web-sg
 
 ## *__4. Verifiering__*
 
-*EC2* instansen har skapats:
+*EC2*-instansen har skapats:
 
 ![alt text](images/ec2.png)
 
