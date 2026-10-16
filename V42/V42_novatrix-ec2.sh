@@ -8,10 +8,12 @@
 # =============================================================================
 set -euo pipefail
 
+export MSYS_NO_PATHCONV=1
+
 # ----- Settings --------------------------------------------------------------
 REGION="eu-north-1"                       # Stockholm
 INSTANCE_TYPE="t3.micro"                  # free tier eligible in eu-north-1
-KEY_NAME="novatrix-key"                   # name of your existing key pair in AWS
+KEY_NAME="AWS_MOV25"                   # name of your existing key pair in AWS
 KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"     # your private key
 SG_NAME="novatrix-web-sg"
 INSTANCE_NAME="novatrix-kundtjanst"
