@@ -1,5 +1,9 @@
 # __Driftsättning av webbserver i AWS__
 
+Repository: https://github.com/03timnor/AWS_MOV25
+
+*Tim Noreliusson Lingestedt, 2026-10-16*
+
 Uppgiften går ut på att provisionera en EC2-instans och konfigurera en webbserver åt *Novatrix* i *AWS*.
 
 För att uppnå Väl Godkänt nivå skall detta göras automatiserat med kod.
