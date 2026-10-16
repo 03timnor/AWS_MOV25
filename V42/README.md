@@ -16,7 +16,7 @@ Först skapas ett "Key Pair" upp som används att man använder för att ansluta
 
 Script *V42_novatrix-ec2.sh* skapar upp en *ec2* instans, webbsida och webbsidans innehåll.
 
-Script *V42_novatrix-ec2.sh* skapar även *Security Group* *V42_novatrix-ec2.sh* som har inställningar för att öppna *SSH* / port 22 endast för min dators IP-adress och port 80 för inkommande trafik till *Novatrix* hemsida.
+Script *V42_novatrix-ec2.sh* skapar även *Security Group* *novatrix-web-sg* som har inställningar för att öppna *SSH* / port 22 endast för min dators IP-adress och port 80 för inkommande trafik till *Novatrix* hemsida.
 
 Script *V42_novatrix-ec2.sh*:
 
@@ -193,6 +193,12 @@ echo "Clean up when you are finished:"
 echo "  aws ec2 terminate-instances --region $REGION --instance-ids $INSTANCE_ID"
 ```
 
+Kör skript *V42_novatrix-ec2.sh*:
+
+```bash
+bash V42_novatrix-ec2.sh
+```
+
 ## *__2. Månadsbudget__*
 
 Månadsbudget är konfigurerad i *AWS* portalen:
@@ -211,7 +217,7 @@ Den varnar (via e-post) för följande:
 
 ## *__3. Dokumentation__*
 
-### 1. Översikt
+### Översikt
 
 | Egenskap | Värde |
 |---|---|
@@ -220,7 +226,7 @@ Den varnar (via e-post) för följande:
 | Region | `eu-north-1` (Stockholm) |
 | Driftsättning | Bash-script med AWS CLI (`V42_novatrix-ec2.sh`) |
 
-### 2. Instans
+### Instans
 
 | Egenskap | Värde |
 |---|---|
@@ -232,7 +238,7 @@ Den varnar (via e-post) för följande:
 | Nätverk | Standard-VPC med publik IPv4-adress |
 | Inloggningsanvändare | `ec2-user` |
 
-### 3. Säkerhet
+### Säkerhet
 
 ### Security group: `novatrix-web-sg`
 
@@ -250,7 +256,7 @@ Den varnar (via e-post) för följande:
 | Privat nyckel | Finns bara lokalt i `~/.ssh/` |
 | Hemligheter i script | Inga. AWS-inloggningen hanteras av AWS CLI (`aws login` eller `aws configure`) |
 
-### 4. Programvara och konfiguration
+### Programvara och konfiguration
 
 | Komponent | Beskrivning |
 |---|---|
@@ -258,7 +264,7 @@ Den varnar (via e-post) för följande:
 | Konfiguration | User data som körs vid första uppstarten: systemuppdatering, installation av httpd, uppsättning av webbfiler |
 | Formulärhantering | CGI-script (bash) som tar emot formuläret och skickar besökaren vidare till bekräftelsesidan. Ingen data sparas |
 
-## 5. Webbsidan
+### Webbsidan
 
 | Fil på instansen | Innehåll |
 |---|---|
@@ -269,14 +275,14 @@ Den varnar (via e-post) för följande:
 
 **Flöde:** användaren fyller i formuläret → klickar på Skicka → `cgi-bin/skicka` → `skickat.html`
 
-## 6. Åtkomst
+### Åtkomst
 
 | Typ | Adress / kommando |
 |---|---|
 | Webb | `http://<publik-IP>` |
 | SSH | `ssh -i ~/.ssh/<nyckel>.pem ec2-user@<publik-IP>` |
 
-## 7. Kostnad
+### Kostnad
 
 | Resurs | Kommentar |
 |---|---|
@@ -284,7 +290,7 @@ Den varnar (via e-post) för följande:
 | EBS 8 GiB gp3 | Inom free tier |
 | Rekommendation | Avsluta instansen när den inte används |
 
-## 8. Begränsningar (avgränsat i uppgiften)
+### Begränsningar (avgränsat i uppgiften)
 
 | Begränsning | Kommentar |
 |---|---|
@@ -293,7 +299,7 @@ Den varnar (via e-post) för följande:
 | Dynamisk IP | Den publika IP-adressen ändras om instansen stoppas och startas igen (ingen Elastic IP) |
 | En instans | Ingen redundans |
 
-## 9. Avveckling
+### Avveckling
 
 ```bash
 aws ec2 terminate-instances --region eu-north-1 --instance-ids <instans-id>
