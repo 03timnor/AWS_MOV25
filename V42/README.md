@@ -12,7 +12,7 @@ För att uppnå Väl Godkänt nivå skall detta göras automatiserat med kod.
 
 Först skapas ett "Key Pair" upp som används att man använder för att ansluta till servern via *SSH* / port 22. Detta görs via *AWS* portalen. Om inte nycklen läcker ut så kan man använda samma par under hela *AWS* kursen. Nyckelparet består av en publik nyckel som finns hos *AWS* och en privat som finns på min dator.
 
-![alt text](key_pair.png)
+![alt text](images/key_pair.png)
 
 Script *V42_novatrix-ec2.sh* skapar upp en *ec2* instans, webbsida och webbsidans innehåll.
 
@@ -197,7 +197,7 @@ echo "  aws ec2 terminate-instances --region $REGION --instance-ids $INSTANCE_ID
 
 Månadsbudget är konfigurerad i *AWS* portalen:
 
-![alt text](budget.png)
+![alt text](images/budget.png)
 
 Den varnar (via e-post) för följande:
 
@@ -304,18 +304,18 @@ aws ec2 delete-security-group --region eu-north-1 --group-name novatrix-web-sg
 
 *ec2* instansen har skapats:
 
-![alt text](ec2.png)
+![alt text](images/ec2.png)
 
 Säkerhetsreglerna är korrekta:
 
-![alt text](security_groups.png)
+![alt text](images/security_groups.png)
 
 Sidan kan nås:
 
-![alt text](novatrix_website.png)
+![alt text](images/novatrix_website.png)
 
-![alt text](novatrix_website_2.png)
+![alt text](images/novatrix_website_2.png)
 
 *SSH* fungerar:
 
-![alt text](SSH.png)
+![alt text](images/SSH.png)
