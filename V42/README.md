@@ -247,7 +247,7 @@ Den varnar (via e-post) för följande:
 | Riktning | Port | Protokoll | Källa | Syfte |
 |---|---|---|---|---|
 | Inkommande | 80 | TCP | `0.0.0.0/0` (alla) | HTTP, webbsidan |
-| Inkommande | 22 | TCP | Administratörens IP (`/32`) | SSH, administration |
+| Inkommande | 22 | TCP | Administratörens IP | SSH, administration |
 | Utgående | Alla | Alla | `0.0.0.0/0` | AWS standard (uppdateringar, paket) |
 
 #### Nycklar och hemligheter
