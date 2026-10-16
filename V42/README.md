@@ -10,7 +10,7 @@ För att uppnå Väl Godkänt nivå skall detta göras automatiserat med kod.
 
 ## *__1. Provisionera en EC2-instans och konfigurera en webbserver__*
 
-Först skapas ett *Key Pair* upp som används att man använder för att ansluta till servern via *SSH* / port 22. Detta görs via *AWS* portalen. Om inte nycklen läcker ut så kan man använda samma par under hela *AWS* kursen. Nyckelparet består av en publik nyckel som finns hos *AWS* och en privat som finns på min dator.
+Först skapas ett *Key Pair* upp som används för att ansluta till servern via *SSH* / port 22. Detta görs via *AWS* portalen. Om inte nyckeln läcker ut så kan man använda samma par under hela *AWS* kursen. Nyckelparet består av en publik nyckel som finns hos *AWS* och en privat som finns på min dator.
 
 ![alt text](images/key_pair.png)
 
@@ -193,7 +193,7 @@ echo "Clean up when you are finished:"
 echo "  aws ec2 terminate-instances --region $REGION --instance-ids $INSTANCE_ID"
 ```
 
-Kör skript *V42_novatrix-ec2.sh*:
+För att köra scriptet *V42_novatrix-ec2.sh*:
 
 ```bash
 bash V42_novatrix-ec2.sh
@@ -240,7 +240,7 @@ Den varnar (via e-post) för följande:
 
 ### Säkerhet
 
-### Security group: `novatrix-web-sg`
+#### Security group: `novatrix-web-sg`
 
 | Riktning | Port | Protokoll | Källa | Syfte |
 |---|---|---|---|---|
@@ -248,7 +248,7 @@ Den varnar (via e-post) för följande:
 | Inkommande | 22 | TCP | Administratörens IP (`/32`) | SSH, administration |
 | Utgående | Alla | Alla | `0.0.0.0/0` | AWS standard (uppdateringar, paket) |
 
-### Nycklar och hemligheter
+#### Nycklar och hemligheter
 
 | Egenskap | Värde |
 |---|---|
