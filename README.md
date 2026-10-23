@@ -4,3 +4,6 @@
 
 ## *__V42 - Driftsättning av webbserver i AWS__*
 - [x] [V42](https://github.com/03timnor/AWS_MOV25/tree/main/V42)
+
+## *__V43 - Driftsättning av webbserver i AWS__*
+- [ ] [V43](https://github.com/03timnor/AWS_MOV25/tree/main/V43)
