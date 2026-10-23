@@ -10,6 +10,11 @@
 #   Lambda role --Get utkast/, Put web/--> S3 web/   (validates file types)
 #   EC2 instance role --List/Get web/--> serves the site, also via plain curl
 #
+# Role chaining on the web server:
+#   EC2 instance role (reader, can write NOTHING)
+#     --sts:AssumeRole--> uploader role (trusts ONLY the reader role)
+#       --PutObject--> S3 loggar/   (daily Apache log archive)
+#
 # Plus IAM groups + users for Novatrix roles: drift, utveckling, marknad.
 #
 # Requirements: AWS CLI v2 with admin credentials, existing key pair, zip OR
@@ -122,7 +127,8 @@ JSON
 )
 
 # ----- Permission policies: WHAT each service role may do --------------------
-# EC2: read-only, and only the published site (web/). Never drafts, never writes.
+# EC2 (reader): read-only, and only the published site (web/). It writes NOTHING
+# itself - to upload logs it must first assume the uploader role.
 EC2_ROLE_POLICY=$(cat <<JSON
 {
   "Version": "2012-10-17",
@@ -139,8 +145,43 @@ EC2_ROLE_POLICY=$(cat <<JSON
       "Effect": "Allow",
       "Action": "s3:GetObject",
       "Resource": "${BUCKET_ARN}/web/*"
+    },
+    {
+      "Sid": "BegarUppladdarroll",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "${UPLOADER_ROLE_ARN}"
     }
   ]
+}
+JSON
+)
+
+# Uploader trust: ONLY a session running with the EC2 reader role may assume it.
+# Not the EC2 service, not users, not even administrators.
+UPLOADER_TRUST=$(cat <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "EndastLasarrollen",
+    "Effect": "Allow",
+    "Principal": { "AWS": "${EC2_ROLE_ARN}" },
+    "Action": "sts:AssumeRole"
+  }]
+}
+JSON
+)
+
+# Uploader: write-only, and only to the log archive. Cannot read anything.
+UPLOADER_ROLE_POLICY=$(cat <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "LaddaUppLoggar",
+    "Effect": "Allow",
+    "Action": "s3:PutObject",
+    "Resource": "${BUCKET_ARN}/loggar/*"
+  }]
 }
 JSON
 )
@@ -201,6 +242,19 @@ DRIFT_POLICY=$(cat <<JSON
       "Effect": "Allow",
       "Action": ["logs:DescribeLogStreams", "logs:GetLogEvents", "logs:FilterLogEvents"],
       "Resource": "${LOG_GROUP_ARN}:*"
+    },
+    {
+      "Sid": "ListaWebbserverloggar",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "${BUCKET_ARN}",
+      "Condition": { "StringLike": { "s3:prefix": ["loggar/*"] } }
+    },
+    {
+      "Sid": "LasWebbserverloggar",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "${BUCKET_ARN}/loggar/*"
     }
   ]
 }
@@ -309,6 +363,19 @@ aws s3api put-bucket-policy --bucket "$SITE_BUCKET" --policy "$(cat <<JSON
 }
 JSON
 )"
+# Keep storage (and cost) small: archived web server logs expire automatically.
+aws s3api put-bucket-lifecycle-configuration --bucket "$SITE_BUCKET" \
+  --lifecycle-configuration "$(cat <<JSON
+{
+  "Rules": [{
+    "ID": "rensa-gamla-loggar",
+    "Status": "Enabled",
+    "Filter": { "Prefix": "loggar/" },
+    "Expiration": { "Days": ${LOG_RETENTION_DAYS} }
+  }]
+}
+JSON
+)"
 
 # Created here (not by Lambda) so the Lambda role needs no logs:CreateLogGroup.
 aws logs create-log-group --region "$REGION" --log-group-name "$LOG_GROUP" 2>/dev/null || true
@@ -328,6 +395,12 @@ if ! aws iam get-instance-profile --instance-profile-name "$EC2_PROFILE" >/dev/n
   aws iam add-role-to-instance-profile --instance-profile-name "$EC2_PROFILE" --role-name "$EC2_ROLE"
 fi
 echo "Instance profile ready: $EC2_PROFILE"
+
+# Retry: IAM rejects a trust policy naming a role that has not propagated yet.
+retry ensure_role "$UPLOADER_ROLE" "$UPLOADER_TRUST" "Novatrix: upload web server logs, assumable only by the EC2 role"
+aws iam put-role-policy --role-name "$UPLOADER_ROLE" --policy-name "novatrix-uppladdare-access" \
+  --policy-document "$UPLOADER_ROLE_POLICY"
+echo "Role ready: $UPLOADER_ROLE (assumable only by $EC2_ROLE)"
 
 ensure_role "$LAMBDA_ROLE" "$LAMBDA_TRUST" "Novatrix publisher: S3 utkast/ -> web/"
 aws iam put-role-policy --role-name "$LAMBDA_ROLE" --policy-name "novatrix-publicerare-access" \
@@ -653,6 +726,63 @@ OnUnitActiveSec=__INTERVAL__
 WantedBy=timers.target
 UNIT
 
+# --- som-uppladdare: role chaining -------------------------------------------
+# Runs a command as the uploader role. Only works because the instance is
+# running with the reader role - that is the only principal the uploader trusts.
+# Usage: som-uppladdare aws s3 cp fil.txt s3://<bucket>/loggar/fil.txt
+cat > /usr/local/bin/som-uppladdare <<'SH'
+#!/bin/bash
+set -euo pipefail
+CREDS=$(aws sts assume-role --region __REGION__ \
+  --role-arn "__UPLOADER_ARN__" \
+  --role-session-name "uppladdare-$(hostname -s)" \
+  --duration-seconds 900 \
+  --query '[Credentials.AccessKeyId,Credentials.SecretAccessKey,Credentials.SessionToken]' \
+  --output text)
+read -r AK SK ST <<<"$CREDS"
+AWS_ACCESS_KEY_ID=$AK AWS_SECRET_ACCESS_KEY=$SK AWS_SESSION_TOKEN=$ST exec "$@"
+SH
+chmod 755 /usr/local/bin/som-uppladdare
+
+# --- novatrix-loggar: archive Apache logs via the uploader role ------------
+cat > /usr/local/bin/novatrix-loggar <<'SH'
+#!/bin/bash
+set -euo pipefail
+IMDS="http://169.254.169.254/latest"
+TOKEN=$(curl -sf -X PUT "$IMDS/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+IID=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" "$IMDS/meta-data/instance-id")
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+for f in access_log error_log; do
+  [[ -s "/var/log/httpd/$f" ]] || continue
+  gzip -c "/var/log/httpd/$f" > "/tmp/$f.gz"
+  /usr/local/bin/som-uppladdare aws s3 cp "/tmp/$f.gz" \
+    "s3://__BUCKET__/loggar/$IID/$STAMP-$f.gz" --region __REGION__ --only-show-errors
+  rm -f "/tmp/$f.gz"
+  echo "Uploaded $f -> loggar/$IID/$STAMP-$f.gz"
+done
+SH
+chmod 755 /usr/local/bin/novatrix-loggar
+
+cat > /etc/systemd/system/novatrix-loggar.service <<'UNIT'
+[Unit]
+Description=Archive Apache logs to S3 via the uploader role
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/novatrix-loggar
+UNIT
+
+cat > /etc/systemd/system/novatrix-loggar.timer <<'UNIT'
+[Unit]
+Description=Archive Apache logs to S3 once a day
+[Timer]
+OnCalendar=daily
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+
 # First sync (retry while the role's credentials become available)
 for i in $(seq 1 12); do
   /usr/local/bin/novatrix-sync && [[ -f /var/www/html/index.html ]] && break
@@ -660,10 +790,11 @@ for i in $(seq 1 12); do
 done
 
 systemctl daemon-reload
-systemctl enable --now httpd novatrix-sync.timer
+systemctl enable --now httpd novatrix-sync.timer novatrix-loggar.timer
 USERDATA
 )
 USER_DATA=${USER_DATA//__BUCKET__/$SITE_BUCKET}
+USER_DATA=${USER_DATA//__UPLOADER_ARN__/$UPLOADER_ROLE_ARN}
 USER_DATA=${USER_DATA//__REGION__/$REGION}
 USER_DATA=${USER_DATA//__INTERVAL__/$SYNC_INTERVAL}
 
@@ -699,6 +830,8 @@ echo "  Website:  http://$PUBLIC_IP"
 echo "  SSH:      ssh -i $KEY_FILE ec2-user@$PUBLIC_IP"
 echo "  On EC2:   s3-curl web/index.html      (read S3 with plain curl + the role)"
 echo "            sudo systemctl start novatrix-sync   (pull changes now instead of every $SYNC_INTERVAL)"
+echo "            som-uppladdare aws sts get-caller-identity   (role chaining: reader -> uploader)"
+echo "            sudo systemctl start novatrix-loggar (archive Apache logs now instead of daily)"
 echo
 echo "Next:     ./V43_verify.sh     (tests every permission and the whole chain)"
 echo "Clean up: ./V43_cleanup.sh"

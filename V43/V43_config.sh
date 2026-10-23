@@ -18,6 +18,7 @@ fi
 # ----- Storage: ONE bucket, three prefixes ----------------------------------
 #   utkast/  drafts uploaded by people    (writes trigger the publisher Lambda)
 #   web/     published site               (written only by the Lambda, read by EC2)
+#   loggar/  Apache log archive           (written only via the uploader role, read by drift)
 SITE_BUCKET="novatrix-webb-${ACCOUNT_ID}"
 FUNCTION_NAME="novatrix-publicerare"
 LOG_GROUP="/aws/lambda/${FUNCTION_NAME}"
@@ -25,7 +26,9 @@ LOG_GROUP="/aws/lambda/${FUNCTION_NAME}"
 # ----- Service roles (machines) ---------------------------------------------
 EC2_ROLE="novatrix-web-ec2-role"
 EC2_PROFILE="novatrix-web-ec2-profile"
+UPLOADER_ROLE="novatrix-uppladdare-role"   # may ONLY be assumed by the EC2 role (role chaining)
 LAMBDA_ROLE="novatrix-publicerare-role"
+LOG_RETENTION_DAYS=30                      # loggar/ objects are deleted after this many days
 
 # ----- Human access: groups and users (user:group) --------------------------
 DRIFT_GROUP="novatrix-drift"
@@ -50,6 +53,7 @@ BUCKET_ARN="arn:aws:s3:::${SITE_BUCKET}"
 FUNCTION_ARN="arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME}"
 LOG_GROUP_ARN="arn:aws:logs:${REGION}:${ACCOUNT_ID}:log-group:${LOG_GROUP}"
 EC2_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${EC2_ROLE}"
+UPLOADER_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${UPLOADER_ROLE}"
 LAMBDA_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${LAMBDA_ROLE}"
 
 # Local scratch folder (relative, so it also works with aws.exe on Windows)

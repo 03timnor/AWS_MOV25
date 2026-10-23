@@ -34,6 +34,8 @@ quiet aws iam remove-role-from-instance-profile --instance-profile-name "$EC2_PR
 quiet aws iam delete-instance-profile --instance-profile-name "$EC2_PROFILE"
 quiet aws iam delete-role-policy --role-name "$EC2_ROLE" --policy-name novatrix-web-ec2-access
 quiet aws iam delete-role --role-name "$EC2_ROLE"
+quiet aws iam delete-role-policy --role-name "$UPLOADER_ROLE" --policy-name novatrix-uppladdare-access
+quiet aws iam delete-role --role-name "$UPLOADER_ROLE"
 quiet aws iam delete-role-policy --role-name "$LAMBDA_ROLE" --policy-name novatrix-publicerare-access
 quiet aws iam delete-role --role-name "$LAMBDA_ROLE"
 

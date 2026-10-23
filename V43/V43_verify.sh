@@ -4,7 +4,8 @@
 #
 #   Part 1: IAM policy simulator - every user and role, allowed AND denied cases
 #   Part 2: the publishing chain for real - draft -> Lambda -> web/ -> website
-#   Part 3: from inside the EC2 instance - S3 with plain curl and the role
+#   Part 3: from inside the EC2 instance - S3 with plain curl and the role,
+#           and role chaining: reader role -> uploader role -> loggar/
 #
 # All output is also saved to V43_verifiering_<date>.txt for the report.
 # =============================================================================
@@ -47,6 +48,7 @@ DRAFT="${BUCKET_ARN}/utkast/index.html"
 DRAFT_IMG="${BUCKET_ARN}/utkast/bilder/logo.png"
 WEB="${BUCKET_ARN}/web/index.html"
 WEB_IMG="${BUCKET_ARN}/web/bilder/logo.png"
+LOGG="${BUCKET_ARN}/loggar/i-0123456789abcdef0/access_log.gz"
 
 echo "Novatrix V43 - verifiering $(date '+%Y-%m-%d %H:%M')   konto $ACCOUNT_ID   region $REGION"
 
@@ -59,6 +61,9 @@ check "$U/anna.drift" ec2:StopInstances "$INSTANCE_ARN" ALLOW "stoppa instans ta
 check "$U/anna.drift" ec2:StopInstances "$INSTANCE_ARN" DENY  "stoppa instans från annat projekt" "$(tag_ctx annat)"
 check "$U/anna.drift" ec2:TerminateInstances "$INSTANCE_ARN" DENY "terminera Novatrix-instansen" "$(tag_ctx "$TAG_VALUE")"
 check "$U/anna.drift" logs:FilterLogEvents "${LOG_GROUP_ARN}:*" ALLOW "läsa publiceringsloggen"
+check "$U/anna.drift" s3:GetObject "$LOGG" ALLOW "läsa arkiverad Apache-logg"
+check "$U/anna.drift" s3:PutObject "$LOGG" DENY "skriva i loggarkivet"
+check "$U/anna.drift" sts:AssumeRole "$UPLOADER_ROLE_ARN" DENY "anta uppladdarrollen"
 check "$U/anna.drift" s3:PutObject "$DRAFT" DENY "ändra webbplatsens innehåll"
 check "$U/anna.drift" lambda:UpdateFunctionCode "$FUNCTION_ARN" DENY "ändra publicerarens kod"
 check "$U/anna.drift" iam:CreateUser "*" DENY "skapa IAM-användare"
@@ -71,6 +76,7 @@ check "$U/erik.utveckling" lambda:UpdateFunctionCode "$FUNCTION_ARN" ALLOW "drif
 check "$U/erik.utveckling" lambda:UpdateFunctionConfiguration "$FUNCTION_ARN" DENY "byta roll/inställningar på Lambda"
 check "$U/erik.utveckling" iam:PassRole "$LAMBDA_ROLE_ARN" DENY "skicka vidare Lambdarollen"
 check "$U/erik.utveckling" ec2:StopInstances "$INSTANCE_ARN" DENY "stoppa servern" "$(tag_ctx "$TAG_VALUE")"
+check "$U/erik.utveckling" s3:GetObject "$LOGG" DENY "läsa besökarloggar"
 
 echo; echo "--- maja.marknad (grupp $MARKNAD_GROUP) ---"
 check "$U/maja.marknad" s3:PutObject "$DRAFT_IMG" ALLOW "ladda upp bild"
@@ -88,6 +94,18 @@ check "$EC2_ROLE_ARN" s3:ListBucket "$BUCKET_ARN" DENY  "lista utkast/" "$(prefi
 check "$EC2_ROLE_ARN" s3:GetObject "$DRAFT" DENY "läsa opublicerade utkast"
 check "$EC2_ROLE_ARN" s3:PutObject "$WEB" DENY "skriva över sajten"
 check "$EC2_ROLE_ARN" s3:ListAllMyBuckets "*" DENY "lista kontots buckets"
+check "$EC2_ROLE_ARN" s3:PutObject "$LOGG" DENY "skriva loggar själv (utan att byta roll)"
+check "$EC2_ROLE_ARN" sts:AssumeRole "$UPLOADER_ROLE_ARN" ALLOW "begära uppladdarrollen"
+check "$EC2_ROLE_ARN" sts:AssumeRole "$LAMBDA_ROLE_ARN" DENY "begära publicerarrollen"
+
+echo; echo "--- roll $UPLOADER_ROLE (antas av EC2-rollen) ---"
+check "$UPLOADER_ROLE_ARN" s3:PutObject "$LOGG" ALLOW "ladda upp logg"
+check "$UPLOADER_ROLE_ARN" s3:GetObject "$LOGG" DENY "läsa loggar"
+check "$UPLOADER_ROLE_ARN" s3:GetObject "$WEB" DENY "läsa publicerad sajt"
+check "$UPLOADER_ROLE_ARN" s3:PutObject "$WEB" DENY "skriva över sajten"
+check "$UPLOADER_ROLE_ARN" s3:PutObject "$DRAFT" DENY "lägga utkast (starta publicering)"
+check "$UPLOADER_ROLE_ARN" s3:ListBucket "$BUCKET_ARN" DENY "lista bucketen" "$(prefix_ctx loggar/)"
+check "$UPLOADER_ROLE_ARN" s3:DeleteObject "$LOGG" DENY "radera loggar"
 
 echo; echo "--- roll $LAMBDA_ROLE (publiceraren) ---"
 check "$LAMBDA_ROLE_ARN" s3:GetObject "$DRAFT" ALLOW "läsa utkast"
@@ -135,6 +153,18 @@ record DENY "$got" "utkast/$TEST_BAD (otillåten filtyp) publiceras inte"
 echo; echo "Senaste publiceringsloggen:"
 aws logs tail "$LOG_GROUP" --region "$REGION" --since 10m 2>&1 | grep -E "publicerad|nekad" | tail -n 6
 
+# Trust policy test for real: even an administrator may NOT assume the uploader
+# role, because its trust policy only names the EC2 reader role.
+echo
+if out=$(aws sts assume-role --role-arn "$UPLOADER_ROLE_ARN" --role-session-name v43-admin-test 2>&1); then
+  got=ALLOW
+elif grep -qiE "AccessDenied|not authorized" <<<"$out"; then
+  got=DENY
+else
+  got=ERROR; echo "     $out" | head -n 2
+fi
+record DENY "$got" "du själv (admin, utan läsarrollen) antar uppladdarrollen"
+
 # =============================================================================
 echo; echo "=== Del 3: inifrån EC2-instansen (S3 med curl och instansrollen) ==="
 # =============================================================================
@@ -165,6 +195,30 @@ else
   remote_check DENY  "cli: lista IAM-användare"       "aws iam list-users"
   remote_check ALLOW "ny publicering syns på sajten"  \
     "sudo systemctl start novatrix-sync && curl -sf http://localhost/$TEST_OK | grep -q V43"
+
+  echo; echo "--- Role chaining: läsarrollen -> uppladdarrollen ---"
+  echo "Före:  $(remote "aws sts get-caller-identity --query Arn --output text")"
+  echo "Efter: $(remote "som-uppladdare aws sts get-caller-identity --query Arn --output text")"
+  LT="loggar/verifiering-${STAMP}"
+  remote_check DENY  "läsarrollen: skriva logg själv" \
+    "echo test | aws s3 cp - s3://$SITE_BUCKET/$LT/direkt.txt $R"
+  remote_check ALLOW "läsarrollen antar uppladdarrollen" \
+    "som-uppladdare aws sts get-caller-identity --query Arn --output text | grep -q assumed-role/$UPLOADER_ROLE/"
+  remote_check ALLOW "uppladdaren: skriva till loggar/" \
+    "echo test | som-uppladdare aws s3 cp - s3://$SITE_BUCKET/$LT/via-roll.txt $R"
+  remote_check DENY  "uppladdaren: läsa web/" \
+    "som-uppladdare aws s3 cp s3://$SITE_BUCKET/web/index.html - $R"
+  remote_check DENY  "uppladdaren: skriva till web/" \
+    "echo hack | som-uppladdare aws s3 cp - s3://$SITE_BUCKET/web/hack.html $R"
+  remote_check DENY  "uppladdaren: lägga utkast" \
+    "echo hack | som-uppladdare aws s3 cp - s3://$SITE_BUCKET/utkast/hack.html $R"
+  remote_check ALLOW "loggjobbet arkiverar Apache-loggarna" \
+    "curl -s -o /dev/null http://localhost/ && sudo systemctl start novatrix-loggar"
+  n=$(aws s3api list-objects-v2 --bucket "$SITE_BUCKET" --prefix loggar/i- --region "$REGION" \
+        --query 'length(Contents || `[]`)' --output text 2>/dev/null)
+  [[ "${n:-0}" =~ ^[0-9]+$ && "${n:-0}" -gt 0 ]] && got=ALLOW || got=DENY
+  record ALLOW "$got" "arkiverade loggar finns i s3://$SITE_BUCKET/loggar/ ($n st)"
+  aws s3 rm "s3://$SITE_BUCKET/$LT/" --recursive --region "$REGION" --only-show-errors 2>/dev/null
 fi
 
 # Remove the test files again (admin credentials)
