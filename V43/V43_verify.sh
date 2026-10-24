@@ -110,7 +110,8 @@ check "$UPLOADER_ROLE_ARN" s3:DeleteObject "$LOGG" DENY "radera loggar"
 echo; echo "--- roll $LAMBDA_ROLE (publiceraren) ---"
 check "$LAMBDA_ROLE_ARN" s3:GetObject "$DRAFT" ALLOW "läsa utkast"
 check "$LAMBDA_ROLE_ARN" s3:PutObject "$WEB" ALLOW "publicera till web/"
-check "$LAMBDA_ROLE_ARN" logs:PutLogEvents "${LOG_GROUP_ARN}:log-stream:test" ALLOW "skriva egen logg"
+check "$LAMBDA_ROLE_ARN" logs:PutLogEvents "${LOG_GROUP_ARN}:*" ALLOW "skriva till egen logggrupp"
+check "$LAMBDA_ROLE_ARN" logs:PutLogEvents "arn:aws:logs:${REGION}:${ACCOUNT_ID}:log-group:annan-grupp:*" DENY "skriva till annan logggrupp"
 check "$LAMBDA_ROLE_ARN" s3:PutObject "$DRAFT" DENY "skriva utkast (kan inte trigga sig själv)"
 check "$LAMBDA_ROLE_ARN" s3:GetObject "$WEB" DENY "läsa publicerad sajt"
 check "$LAMBDA_ROLE_ARN" s3:DeleteObject "$WEB" DENY "radera publicerade filer"
@@ -151,7 +152,11 @@ published "$TEST_BAD" && got=ALLOW || got=DENY
 record DENY "$got" "utkast/$TEST_BAD (otillåten filtyp) publiceras inte"
 
 echo; echo "Senaste publiceringsloggen:"
-aws logs tail "$LOG_GROUP" --region "$REGION" --since 10m 2>&1 | grep -E "publicerad|nekad" | tail -n 6
+LAMBDA_LOG=$(aws logs tail "$LOG_GROUP" --region "$REGION" --since 10m 2>&1 | grep -E "publicerad|nekad")
+tail -n 6 <<<"$LAMBDA_LOG"
+# Real proof of the log permission: these lines were written by the Lambda itself, with its role.
+grep -q "web/$TEST_OK" <<<"$LAMBDA_LOG" && got=ALLOW || got=DENY
+record ALLOW "$got" "Lambdan skriver sin logg med sin egen roll (raden ovan)"
 
 # Trust policy test for real: even an administrator may NOT assume the uploader
 # role, because its trust policy only names the EC2 reader role.
@@ -168,7 +173,11 @@ record DENY "$got" "du själv (admin, utan läsarrollen) antar uppladdarrollen"
 # =============================================================================
 echo; echo "=== Del 3: inifrån EC2-instansen (S3 med curl och instansrollen) ==="
 # =============================================================================
-remote() { ssh -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ec2-user@"$IP" "$1" 2>&1; }
+# LogLevel=ERROR hides the SSH client's own notices (known_hosts, key exchange warnings)
+# so they don't mix with the results.
+SSH_OPTS=(-i "$KEY_FILE" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o LogLevel=ERROR)
+remote()     { ssh "${SSH_OPTS[@]}" ec2-user@"$IP" "$1" 2>&1; }          # stdout+stderr (for checks)
+remote_out() { ssh "${SSH_OPTS[@]}" ec2-user@"$IP" "$1" 2>/dev/null; }   # stdout only (for printing)
 remote_check() {   # expected description command
   local output got
   if output=$(remote "$3"); then
@@ -186,7 +195,7 @@ if [[ -z "$IP" ]]; then
 elif [[ ! -f "$KEY_FILE" ]]; then
   echo "Hittar inte $KEY_FILE - hoppar över SSH-testerna."
 else
-  echo "Instansen kör som: $(remote "aws sts get-caller-identity --query Arn --output text")"
+  echo "Instansen kör som: $(remote_out "aws sts get-caller-identity --query Arn --output text")"
   R="--region $REGION"
   remote_check ALLOW "curl: läsa web/index.html"      "s3-curl web/index.html | grep -qi konstruktion"
   remote_check DENY  "curl: läsa utkast/index.html"   "s3-curl utkast/index.html"
@@ -197,8 +206,9 @@ else
     "sudo systemctl start novatrix-sync && curl -sf http://localhost/$TEST_OK | grep -q V43"
 
   echo; echo "--- Role chaining: läsarrollen -> uppladdarrollen ---"
-  echo "Före:  $(remote "aws sts get-caller-identity --query Arn --output text")"
-  echo "Efter: $(remote "som-uppladdare aws sts get-caller-identity --query Arn --output text")"
+  echo "Identitet före rollbytet:  $(remote_out "aws sts get-caller-identity --query Arn --output text")"
+  echo "Identitet efter rollbytet: $(remote_out "som-uppladdare aws sts get-caller-identity --query Arn --output text")"
+  echo
   LT="loggar/verifiering-${STAMP}"
   remote_check DENY  "läsarrollen: skriva logg själv" \
     "echo test | aws s3 cp - s3://$SITE_BUCKET/$LT/direkt.txt $R"
@@ -226,7 +236,7 @@ for k in "utkast/$TEST_OK" "utkast/$TEST_BAD" "web/$TEST_OK"; do
   aws s3 rm "s3://$SITE_BUCKET/$k" --region "$REGION" --only-show-errors 2>/dev/null
 done
 rm -f "$WORK_DIR/$TEST_OK" "$WORK_DIR/$TEST_BAD"
-[[ -n "$IP" && -f "$KEY_FILE" ]] && remote "sudo rm -f /var/www/html/$TEST_OK" >/dev/null
+[[ -n "$IP" && -f "$KEY_FILE" ]] && remote "sudo rm -f /var/www/html/$TEST_OK" >/dev/null || true
 
 echo
 echo "=== Resultat: $PASS OK, $FAIL FEL ==="

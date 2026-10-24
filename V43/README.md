@@ -4,7 +4,7 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-10-23*
 
-Veckans uppgift går ut på att konfigurera *IAM*, grupper och policies i *AWS* enligt *Least Privilege*
+Veckans uppgift går ut på att konfigurera *IAM*, grupper och policies i *AWS* enligt *Least Privilege*.
 
 För att uppnå nivån Väl Godkänt skall detta göras automatiserat med kod, använda flera samverkande *IAM*-roller, använda genomtänkt *Least privilege*  och motivera designen.
 
