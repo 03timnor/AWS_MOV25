@@ -1,0 +1,108 @@
+Novatrix V43 - verifiering 2026-10-24 12:58   konto XXXXXXXXXXXX   region eu-north-1
+
+=== Del 1: IAM policy simulator ===
+
+--- anna.drift (grupp novatrix-drift) ---
+OK   förväntat ALLOW fick ALLOW ec2:DescribeInstances  -  se alla instanser
+OK   förväntat ALLOW fick ALLOW ec2:StopInstances  -  stoppa instans taggad Projekt=novatrix
+OK   förväntat DENY  fick DENY  ec2:StopInstances  -  stoppa instans från annat projekt
+OK   förväntat DENY  fick DENY  ec2:TerminateInstances  -  terminera Novatrix-instansen
+OK   förväntat ALLOW fick ALLOW logs:FilterLogEvents  -  läsa publiceringsloggen
+OK   förväntat ALLOW fick ALLOW s3:GetObject  -  läsa arkiverad Apache-logg
+OK   förväntat DENY  fick DENY  s3:PutObject  -  skriva i loggarkivet
+OK   förväntat DENY  fick DENY  sts:AssumeRole  -  anta uppladdarrollen
+OK   förväntat DENY  fick DENY  s3:PutObject  -  ändra webbplatsens innehåll
+OK   förväntat DENY  fick DENY  lambda:UpdateFunctionCode  -  ändra publicerarens kod
+OK   förväntat DENY  fick DENY  iam:CreateUser  -  skapa IAM-användare
+
+--- erik.utveckling (grupp novatrix-utveckling) ---
+OK   förväntat ALLOW fick ALLOW s3:PutObject  -  ladda upp utkast
+OK   förväntat ALLOW fick ALLOW s3:GetObject  -  läsa publicerad sida
+OK   förväntat DENY  fick DENY  s3:PutObject  -  publicera förbi publiceraren
+OK   förväntat ALLOW fick ALLOW lambda:UpdateFunctionCode  -  driftsätta ny publicerarkod
+OK   förväntat DENY  fick DENY  lambda:UpdateFunctionConfiguration  -  byta roll/inställningar på Lambda
+OK   förväntat DENY  fick DENY  iam:PassRole  -  skicka vidare Lambdarollen
+OK   förväntat DENY  fick DENY  ec2:StopInstances  -  stoppa servern
+OK   förväntat DENY  fick DENY  s3:GetObject  -  läsa besökarloggar
+
+--- maja.marknad (grupp novatrix-marknad) ---
+OK   förväntat ALLOW fick ALLOW s3:PutObject  -  ladda upp bild
+OK   förväntat ALLOW fick ALLOW s3:ListBucket  -  lista sina bilder
+OK   förväntat DENY  fick DENY  s3:ListBucket  -  lista hela bucketen
+OK   förväntat DENY  fick DENY  s3:PutObject  -  ändra sidans HTML
+OK   förväntat DENY  fick DENY  s3:PutObject  -  publicera förbi publiceraren
+OK   förväntat DENY  fick DENY  s3:DeleteObject  -  radera bilder
+OK   förväntat DENY  fick DENY  lambda:UpdateFunctionCode  -  ändra publicerarens kod
+
+--- roll novatrix-web-ec2-role (EC2-instansen) ---
+OK   förväntat ALLOW fick ALLOW s3:GetObject  -  läsa publicerad sajt
+OK   förväntat ALLOW fick ALLOW s3:ListBucket  -  lista web/
+OK   förväntat DENY  fick DENY  s3:ListBucket  -  lista utkast/
+OK   förväntat DENY  fick DENY  s3:GetObject  -  läsa opublicerade utkast
+OK   förväntat DENY  fick DENY  s3:PutObject  -  skriva över sajten
+OK   förväntat DENY  fick DENY  s3:ListAllMyBuckets  -  lista kontots buckets
+OK   förväntat DENY  fick DENY  s3:PutObject  -  skriva loggar själv (utan att byta roll)
+OK   förväntat ALLOW fick ALLOW sts:AssumeRole  -  begära uppladdarrollen
+OK   förväntat DENY  fick DENY  sts:AssumeRole  -  begära publicerarrollen
+
+--- roll novatrix-uppladdare-role (antas av EC2-rollen) ---
+OK   förväntat ALLOW fick ALLOW s3:PutObject  -  ladda upp logg
+OK   förväntat DENY  fick DENY  s3:GetObject  -  läsa loggar
+OK   förväntat DENY  fick DENY  s3:GetObject  -  läsa publicerad sajt
+OK   förväntat DENY  fick DENY  s3:PutObject  -  skriva över sajten
+OK   förväntat DENY  fick DENY  s3:PutObject  -  lägga utkast (starta publicering)
+OK   förväntat DENY  fick DENY  s3:ListBucket  -  lista bucketen
+OK   förväntat DENY  fick DENY  s3:DeleteObject  -  radera loggar
+
+--- roll novatrix-publicerare-role (publiceraren) ---
+OK   förväntat ALLOW fick ALLOW s3:GetObject  -  läsa utkast
+OK   förväntat ALLOW fick ALLOW s3:PutObject  -  publicera till web/
+OK   förväntat ALLOW fick ALLOW logs:PutLogEvents  -  skriva till egen logggrupp
+OK   förväntat DENY  fick DENY  logs:PutLogEvents  -  skriva till annan logggrupp
+OK   förväntat DENY  fick DENY  s3:PutObject  -  skriva utkast (kan inte trigga sig själv)
+OK   förväntat DENY  fick DENY  s3:GetObject  -  läsa publicerad sajt
+OK   förväntat DENY  fick DENY  s3:DeleteObject  -  radera publicerade filer
+OK   förväntat DENY  fick DENY  s3:ListBucket  -  lista bucketen
+OK   förväntat DENY  fick DENY  ec2:DescribeInstances  -  se EC2-instanser
+
+=== Del 2: publiceringskedjan (utkast -> Lambda -> web/ -> webbplats) ===
+Webbplats: http://16.170.251.154
+OK   förväntat 200   fick 200   startsidan svarar (HTTP-status)
+OK   förväntat ALLOW fick ALLOW startsidan är välkomstsidan från S3
+OK   förväntat ALLOW fick ALLOW utkast/v43-test-125949.html publiceras till web/ av Lambdan
+OK   förväntat DENY  fick DENY  utkast/v43-test-125949.php (otillåten filtyp) publiceras inte
+
+Senaste publiceringsloggen (väntar tills testets rader har levererats till CloudWatch):
+2026-10-24T10:52:44.756000+00:00 2026/10/24/[$LATEST]9281cef51f85409f8bdeac7d6dd84801 {"publicerad": "web/index.html", "bytes": 1149}
+2026-10-24T10:52:44.971000+00:00 2026/10/24/[$LATEST]9281cef51f85409f8bdeac7d6dd84801 {"publicerad": "web/style.css", "bytes": 1518}
+2026-10-24T10:52:46.624000+00:00 2026/10/24/[$LATEST]9281cef51f85409f8bdeac7d6dd84801 {"publicerad": "web/bilder/kran.svg", "bytes": 728}
+2026-10-24T10:59:51.618000+00:00 2026/10/24/[$LATEST]eebef73bffa6464ea67b4e1f0b578f4f {"publicerad": "web/v43-test-125949.html", "bytes": 46}
+2026-10-24T10:59:52.270000+00:00 2026/10/24/[$LATEST]eebef73bffa6464ea67b4e1f0b578f4f {"nekad": "utkast/v43-test-125949.php", "orsak": "filtypen .php publiceras inte"}
+OK   förväntat ALLOW fick ALLOW Lambdan skriver sin logg med sin egen roll (raden ovan)
+
+OK   förväntat DENY  fick DENY  du själv (admin, utan läsarrollen) antar uppladdarrollen
+
+=== Del 3: inifrån EC2-instansen (S3 med curl och instansrollen) ===
+Instansen kör som: arn:aws:sts::XXXXXXXXXXXX:assumed-role/novatrix-web-ec2-role/i-0ce271f9672b5cd55
+OK   förväntat ALLOW fick ALLOW curl: läsa web/index.html
+OK   förväntat DENY  fick DENY  curl: läsa utkast/index.html
+OK   förväntat DENY  fick DENY  curl: skriva till web/
+OK   förväntat DENY  fick DENY  cli: lista kontots buckets
+OK   förväntat DENY  fick DENY  cli: lista IAM-användare
+OK   förväntat ALLOW fick ALLOW ny publicering syns på sajten
+
+--- Role chaining: läsarrollen -> uppladdarrollen ---
+Identitet före rollbytet:  arn:aws:sts::XXXXXXXXXXXX:assumed-role/novatrix-web-ec2-role/i-0ce271f9672b5cd55
+Identitet efter rollbytet: arn:aws:sts::XXXXXXXXXXXX:assumed-role/novatrix-uppladdare-role/uppladdare-ip-172-31-38-203
+
+OK   förväntat DENY  fick DENY  läsarrollen: skriva logg själv
+OK   förväntat ALLOW fick ALLOW läsarrollen antar uppladdarrollen
+OK   förväntat ALLOW fick ALLOW uppladdaren: skriva till loggar/
+OK   förväntat DENY  fick DENY  uppladdaren: läsa web/
+OK   förväntat DENY  fick DENY  uppladdaren: skriva till web/
+OK   förväntat DENY  fick DENY  uppladdaren: lägga utkast
+OK   förväntat ALLOW fick ALLOW loggjobbet arkiverar Apache-loggarna
+OK   förväntat ALLOW fick ALLOW arkiverade loggar finns i s3://novatrix-webb-XXXXXXXXXXXX/loggar/ (2 st)
+
+=== Resultat: 71 OK, 0 FEL ===
+Sparat i V43_verifiering_20261024-1258.txt
