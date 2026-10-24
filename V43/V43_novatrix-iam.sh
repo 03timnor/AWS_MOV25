@@ -813,6 +813,7 @@ else
     --security-group-ids "$SG_ID" \
     --associate-public-ip-address \
     --iam-instance-profile Name="$EC2_PROFILE" \
+    --credit-specification CpuCredits=standard \
     --metadata-options "HttpTokens=required,HttpEndpoint=enabled,HttpPutResponseHopLimit=1" \
     --user-data "$USER_DATA" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=${TAG_KEY},Value=${TAG_VALUE}}]" \

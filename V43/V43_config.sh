@@ -42,6 +42,7 @@ USERS=(
 
 # ----- EC2 --------------------------------------------------------------------
 INSTANCE_TYPE="t3.micro"                   # free tier eligible in eu-north-1
+                                           # (launched with CpuCredits=standard: no surplus CPU charges)
 KEY_NAME="AWS_MOV25"
 KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"
 SG_NAME="novatrix-web-sg"
