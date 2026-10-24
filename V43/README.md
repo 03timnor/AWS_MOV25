@@ -12,9 +12,7 @@ För att uppnå nivån Väl Godkänt skall detta göras automatiserat med kod, a
 
 ##  *__2. Dokumentation__*
 
-# V43 – Dokumentation av Novatrix-miljön
-
-Region: `eu-north-1` (Stockholm). Alla resurser taggas `Projekt=novatrix`. `<konto-id>` är ditt 12-siffriga AWS-konto-id.
+Region: `eu-north-1` (Stockholm). Alla resurser taggas `Projekt=novatrix`. `<konto-id>` är ens 12-siffriga AWS-konto-id.
 
 ### Översikt – alla resurser
 
@@ -307,85 +305,85 @@ flowchart LR
 
 ### Hemsida kan nås:
 
-![alt text](novatrix_website.png)
+![alt text](pictures/novatrix_website.png)
 
 ### IAM simulator *Drift*:
 
-![alt text](iam_drift_example.png)
+![alt text](pictures/iam_drift_example.png)
 
 ### IAM simulator *Utveckling*:
 
-![alt text](iam_utveckling_example_1.png)
+![alt text](pictures/iam_utveckling_example_1.png)
 
-![alt text](iam_utveckling_example_2.png)
+![alt text](pictures/iam_utveckling_example_2.png)
 
-![alt text](iam_utveckling_example_3.png)
+![alt text](pictures/iam_utveckling_example_3.png)
 
 ### IAM simulator *Marknad*:
 
-![alt text](iam_marknad_example_1.png)
+![alt text](pictures/iam_marknad_example_1.png)
 
-![alt text](iam_marknad_example_2.png)
+![alt text](pictures/iam_marknad_example_2.png)
 
 ### IAM simulator *EC2*:
 
-![alt text](iam_ec2_example.png)
+![alt text](pictures/iam_ec2_example.png)
 
 ### IAM simulator *Publicerare*:
 
-![alt text](iam_publicerare_example_1.png)
+![alt text](pictures/iam_publicerare_example_1.png)
 
-![alt text](iam_publicerare_example_2.png)
+![alt text](pictures/iam_publicerare_example_2.png)
 
 ### IAM simulator *Uppladdare*:
 
-![alt text](iam_uppladdare_example_1.png)
+![alt text](pictures/iam_uppladdare_example_1.png)
 
-![alt text](iam_uppladdare_example_2.png)
+![alt text](pictures/iam_uppladdare_example_2.png)
 
 ### Console *Drift*:
 
-![alt text](drift_console_example_1.png)
+![alt text](pictures/drift_console_example_1.png)
 
-![alt text](drift_console_example_2.png)
+![alt text](pictures/drift_console_example_2.png)
 
-![alt text](drift_console_example_3.png)
+![alt text](pictures/drift_console_example_3.png)
 
 ### Console *Utveckling*:
 
-![alt text](utveckling_console_example_1.png)
+![alt text](pictures/utveckling_console_example_1.png)
 
-![alt text](utveckling_console_example_2.png)
+![alt text](pictures/utveckling_console_example_2.png)
 
-![alt text](utveckling_console_example_3.png)
+![alt text](pictures/utveckling_console_example_3.png)
 
-![alt text](utveckling_console_example_4.png)
+![alt text](pictures/utveckling_console_example_4.png)
 
-![alt text](utveckling_console_example_5.png)
+![alt text](pictures/utveckling_console_example_5.png)
 
 ### Console *Marknad*:
 
-![alt text](marknad_console_example_1.png)
+![alt text](pictures/marknad_console_example_1.png)
 
-![alt text](marknad_console_example_2.png)
+![alt text](pictures/marknad_console_example_2.png)
 
-![alt text](marknad_console_example_3.png)
+![alt text](pictures/marknad_console_example_3.png)
 
 ### EC2:
 
-![alt text](ec2_verified_example.png)
+![alt text](pictures/ec2_verified_example.png)
 
 ### Role chaining:
 
-![alt text](role_chaining_example.png)
+![alt text](pictures/role_chaining_example.png)
 
-![alt text](iam_role_chaining_example_1.png)
+![alt text](pictures/iam_role_chaining_example_1.png)
 
-![alt text](iam_role_chaining_example_2.png)
+![alt text](pictures/iam_role_chaining_example_2.png)
 
 ### Verification script result:
 
-![alt text](all_verified.png)
+![alt text](pictures/all_verified.png)
 
 ```text
 Novatrix V43 - verifiering 2026-10-24 12:58   konto 236780468239   region eu-north-1
