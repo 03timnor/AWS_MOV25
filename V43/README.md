@@ -119,7 +119,7 @@ flowchart LR
     s3u -.->|"resource policy: InvokeFunction"| lam
 ```
 
-### 5. Behörighetskedjor
+### Behörighetskedjor
 
 #### Publicering
 
