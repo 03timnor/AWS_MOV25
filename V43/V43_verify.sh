@@ -151,8 +151,14 @@ record ALLOW "$got" "utkast/$TEST_OK publiceras till web/ av Lambdan"
 published "$TEST_BAD" && got=ALLOW || got=DENY
 record DENY "$got" "utkast/$TEST_BAD (otillåten filtyp) publiceras inte"
 
-echo; echo "Senaste publiceringsloggen:"
-LAMBDA_LOG=$(aws logs tail "$LOG_GROUP" --region "$REGION" --since 10m 2>&1 | grep -E "publicerad|nekad")
+echo; echo "Senaste publiceringsloggen (väntar tills testets rader har levererats till CloudWatch):"
+# CloudWatch Logs delivers log lines a few seconds after the Lambda wrote them,
+# so poll until both test files show up (max ~60 s).
+for i in $(seq 1 12); do
+  LAMBDA_LOG=$(aws logs tail "$LOG_GROUP" --region "$REGION" --since 10m 2>&1 | grep -E "publicerad|nekad")
+  grep -q "web/$TEST_OK" <<<"$LAMBDA_LOG" && grep -q "$TEST_BAD" <<<"$LAMBDA_LOG" && break
+  sleep 5
+done
 tail -n 6 <<<"$LAMBDA_LOG"
 # Real proof of the log permission: these lines were written by the Lambda itself, with its role.
 grep -q "web/$TEST_OK" <<<"$LAMBDA_LOG" && got=ALLOW || got=DENY
