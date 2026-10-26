@@ -1298,7 +1298,7 @@ Allt tas bort med `V43_cleanup.sh`.
 
 | Roll | Trust policy (vem får anta den) | Rättigheter | Får inte |
 |---|---|---|---|
-| `novatrix-web-ec2-role` (läsare) | `ec2.amazonaws.com` | `s3:ListBucket` med `s3:prefix = web/*`<br>`s3:GetObject` på `web/*`<br>`sts:AssumeRole` på uppladdarrollen | Skriva något, läsa utkast eller loggar, lista andra buckets |
+| `novatrix-web-ec2-role` (läsare) | `ec2.amazonaws.com` | `s3:ListBucket` med `s3:prefix = web/*`<br>`s3:GetObject` på `web/*`<br>`sts:AssumeRole` på uppladdarrollen | Skriva något själv (bara via uppladdarrollen), läsa utkast eller loggar, lista andra buckets |
 | `novatrix-uppladdare-role` | Endast rollen `novatrix-web-ec2-role` | `s3:PutObject` på `loggar/*` | Läsa något, skriva till `web/` eller `utkast/`, radera, lista |
 | `novatrix-publicerare-role` | `lambda.amazonaws.com` | `s3:GetObject` på `utkast/*`<br>`s3:PutObject` på `web/*`<br>`logs:CreateLogStream`, `logs:PutLogEvents` på sin egen logggrupp | Läsa `web/`, skriva `utkast/` (kan inte trigga sig själv), radera, lista, nå andra tjänster |
 
@@ -1350,6 +1350,7 @@ flowchart LR
     pu --> s3u
     pu -->|"läsa"| s3w
     pu --> lam
+    pu -->|"läsa"| cwl
     pm --> s3u
     rl -->|"läsa"| s3w
     ru -->|"skriva"| s3l
@@ -1549,7 +1550,7 @@ Grundprincipen är simpel, behövs det inte så skall man inte ha det. Det är d
 
 | Princip | Hur den används | Exempel |
 |---|---|---|
-| **Bara nödvändiga åtgärder** | Inga jokertecken som s3:* eller ec2:* i tillåtande policies. Resource: "*" används bara för läsåtgärder som inte stöder resursnivå | Drift får `Start/Stop/RebootInstances`, men inte `TerminateInstances` |
+| **Bara nödvändiga åtgärder** | Inga jokertecken som `s3:*` eller `ec2:*` i tillåtande policies. `Resource: "*"` används bara för läsåtgärder som inte stöder resursnivå | Drift får `Start/Stop/RebootInstances`, men inte `TerminateInstances` |
 | **Bara nödvändiga resurser** | Rättigheter låsta till prefix och enskilda resurser | Marknad får bara `utkast/bilder/*`, och utveckling bara funktionen `novatrix-publicerare` |
 | **Villkor** | Taggar och prefix styr när en rättighet gäller | Drift styr bara instanser taggade `Projekt=novatrix`. EC2 får bara lista `web/` |
 | **Separation of duties** | Varje grupp har en uppgift, ingen har två | Drift kör servern, utveckling bygger, marknad levererar bilder |
