@@ -1252,7 +1252,7 @@ echo "Done."
 
 ##  *__2. Dokumentation__*
 
-Region: `eu-north-1` (Stockholm). Alla resurser taggas `Projekt=novatrix`. `<konto-id>` är ens 12-siffriga AWS-konto-id.
+Region: `eu-north-1` (Stockholm). Alla resurser taggas `Projekt=novatrix`. `<konto-id>` är kontots 12-siffriga AWS-konto-id.
 
 ### Översikt – alla resurser
 
@@ -1304,7 +1304,7 @@ Allt tas bort med `V43_cleanup.sh`.
 
 | Resursbaserad policy | Var | Tillåter | Villkor |
 |---|---|---|---|
-| `s3-utkast` | På Lambdan `novatrix-publicerare` | `s3.amazonaws.com` får `lambda:InvokeFunction` | `SourceArn` = vår bucket, `SourceAccount` = vårt konto (skydd mot confused deputy) |
+| `s3-utkast` | På Lambdan `novatrix-publicerare` | `s3.amazonaws.com` får `lambda:InvokeFunction` | `SourceArn` = den egna bucketen, `SourceAccount` = det egna kontot (skydd mot confused deputy) |
 | `EndastTLS` | På S3-bucketen | Nekar alla anrop utan TLS | `aws:SecureTransport = false` |
 
 ### IAM-grupper och användare (människor)
@@ -1391,7 +1391,7 @@ Uppladdarrollen kan **bara** antas av en session som redan kör med läsarrollen
 | Publik IPv4 | Ja (automatisk) | Nåbar för besökare och SSH |
 | IMDS | v2 krävs, hop limit 1 | Försvårar stöld av rollens nycklar via SSRF |
 | Säkerhetsgrupp, port 80 | `0.0.0.0/0` | Webbplatsen är publik |
-| Säkerhetsgrupp, port 22 | Din IP `/32` | SSH bara från ens dator |
+| Säkerhetsgrupp, port 22 | Administratörens IP `/32` | SSH bara från administratörens dator |
 | Nyckelpar | `AWS_MOV25` | SSH-inloggning |
 
 ### Komponenter på EC2-instansen
@@ -1433,7 +1433,7 @@ Uppladdarrollen kan **bara** antas av en session som redan kör med läsarrollen
 | Del | Metod | Antal tester | Vad som visas |
 |---|---|---|---|
 | 1 | IAM Policy Simulator | 51 | Varje användare och roll: både tillåtna och nekade åtgärder, inklusive villkor (tagg, prefix) |
-| 2 | Riktiga anrop från ens dator | 6 | Sajten svarar, `.html` publiceras, `.php` stoppas, Lambdan loggar med sin roll, admin nekas att anta uppladdarrollen |
+| 2 | Riktiga anrop från administratörens dator | 6 | Sajten svarar, `.html` publiceras, `.php` stoppas, Lambdan loggar med sin roll, admin nekas att anta uppladdarrollen |
 | 3 | Riktiga anrop inifrån EC2 via SSH | 14 | `s3-curl` läser `web/` men nekas annat, ny publicering syns, role chaining före och efter, uppladdarens begränsningar, loggarkivering |
 | **Totalt** | | **71** | Mål: `71 OK, 0 FEL` |
 
@@ -1527,7 +1527,7 @@ flowchart LR
     end
 
     besok -->|"HTTP :80 · öppen"| ec2
-    admin -->|"SSH :22 · bara din IP"| ec2
+    admin -->|"SSH :22 · bara administratörens IP"| ec2
     team -->|"laddar upp utkast"| utkast
     utkast -->|"S3-händelse startar"| lambda
     lambda -->|"läser"| utkast
@@ -1556,7 +1556,7 @@ Grundprincipen är simpel, behövs det inte så skall man inte ha det. Det är d
 | **Dataflöde åt ett håll** | Ingen komponent läser och skriver samma prefix | Lambdan läser `utkast/` och skriver `web/`, aldrig tvärtom, och kan därför inte trigga sig själv |
 | **En kontrollpunkt** | Ingen människa kan skriva till sajten direkt | Allt går via Lambdan, som stoppar otillåtna filtyper (t.ex. `.php`) |
 | **Skrivrätt bara vid behov** | Role chaining: skrivrätten finns i en separat roll som måste begäras | Läsarrollen kan inte skriva. Den måste anta uppladdarrollen, som gäller i 15 minuter och bara för `loggar/` |
-| **Begränsat vem som får anta roller** | Trust policies och resource policies | Bara läsarrollen får anta uppladdarrollen. Bara vår bucket i vårt konto får starta Lambdan |
+| **Begränsat vem som får anta roller** | Trust policies och resource policies | Bara läsarrollen får anta uppladdarrollen. Bara den egna bucketen i det egna kontot får starta Lambdan |
 | **Inga fasta nycklar** | Tjänster får tillfälliga nycklar via roller | EC2 och Lambda har inga sparade nycklar. IMDSv2 skyddar EC2:s nycklar |
 | **Ingen eskalering** | Ingen kan ge sig själv mer rätt | Utveckling saknar `iam:PassRole` och `UpdateFunctionConfiguration` och kan inte byta Lambdans roll |
 
