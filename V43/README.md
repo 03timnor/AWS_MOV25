@@ -1549,11 +1549,11 @@ Grundprincipen är simpel, behövs det inte så skall man inte ha det. Det är d
 
 | Princip | Hur den används | Exempel |
 |---|---|---|
-| **Bara nödvändiga åtgärder** | Inga jokertecken som `s3:*` eller `ec2:*`, varje åtgärd listas för sig | Drift får `Start/Stop/RebootInstances`, men inte `TerminateInstances` |
+| **Bara nödvändiga åtgärder** | Inga jokertecken som s3:* eller ec2:* i tillåtande policies. Resource: "*" används bara för läsåtgärder som inte stöder resursnivå | Drift får `Start/Stop/RebootInstances`, men inte `TerminateInstances` |
 | **Bara nödvändiga resurser** | Rättigheter låsta till prefix och enskilda resurser | Marknad får bara `utkast/bilder/*`, och utveckling bara funktionen `novatrix-publicerare` |
 | **Villkor** | Taggar och prefix styr när en rättighet gäller | Drift styr bara instanser taggade `Projekt=novatrix`. EC2 får bara lista `web/` |
 | **Separation of duties** | Varje grupp har en uppgift, ingen har två | Drift kör servern, utveckling bygger, marknad levererar bilder |
-| **Dataflöde åt ett håll** | Ingen komponent läser och skriver samma prefix | Lambdan läser `utkast/` och skriver `web/`, aldrig tvärtom, och kan därför inte trigga sig själv |
+| **Dataflöde åt ett håll** | Ingen tjänst läser och skriver samma prefix | Lambdan läser `utkast/` och skriver `web/`, aldrig tvärtom, och kan därför inte trigga sig själv |
 | **En kontrollpunkt** | Ingen människa kan skriva till sajten direkt | Allt går via Lambdan, som stoppar otillåtna filtyper (t.ex. `.php`) |
 | **Skrivrätt bara vid behov** | Role chaining: skrivrätten finns i en separat roll som måste begäras | Läsarrollen kan inte skriva. Den måste anta uppladdarrollen, som gäller i 15 minuter och bara för `loggar/` |
 | **Begränsat vem som får anta roller** | Trust policies och resource policies | Bara läsarrollen får anta uppladdarrollen. Bara den egna bucketen i det egna kontot får starta Lambdan |
