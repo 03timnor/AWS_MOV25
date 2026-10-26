@@ -1647,7 +1647,7 @@ Denna design med *Least privilege* som utgångspunkt bidrar till en miljö med m
 ![alt text](pictures/all_verified.png)
 
 ```text
-Novatrix V43 - verifiering 2026-10-24 12:58   konto 236780468239   region eu-north-1
+Novatrix V43 - verifiering 2026-10-24 12:58   konto XXXXXXXXXXXX   region eu-north-1
 
 === Del 1: IAM policy simulator ===
 
@@ -1732,7 +1732,7 @@ OK   förväntat ALLOW fick ALLOW Lambdan skriver sin logg med sin egen roll (ra
 OK   förväntat DENY  fick DENY  du själv (admin, utan läsarrollen) antar uppladdarrollen
 
 === Del 3: inifrån EC2-instansen (S3 med curl och instansrollen) ===
-Instansen kör som: arn:aws:sts::236780468239:assumed-role/novatrix-web-ec2-role/i-0ce271f9672b5cd55
+Instansen kör som: arn:aws:sts::XXXXXXXXXXXX:assumed-role/novatrix-web-ec2-role/i-0ce271f9672b5cd55
 OK   förväntat ALLOW fick ALLOW curl: läsa web/index.html
 OK   förväntat DENY  fick DENY  curl: läsa utkast/index.html
 OK   förväntat DENY  fick DENY  curl: skriva till web/
@@ -1741,8 +1741,8 @@ OK   förväntat DENY  fick DENY  cli: lista IAM-användare
 OK   förväntat ALLOW fick ALLOW ny publicering syns på sajten
 
 --- Role chaining: läsarrollen -> uppladdarrollen ---
-Identitet före rollbytet:  arn:aws:sts::236780468239:assumed-role/novatrix-web-ec2-role/i-0ce271f9672b5cd55
-Identitet efter rollbytet: arn:aws:sts::236780468239:assumed-role/novatrix-uppladdare-role/uppladdare-ip-172-31-38-203
+Identitet före rollbytet:  arn:aws:sts::XXXXXXXXXXXX:assumed-role/novatrix-web-ec2-role/i-0ce271f9672b5cd55
+Identitet efter rollbytet: arn:aws:sts::XXXXXXXXXXXX:assumed-role/novatrix-uppladdare-role/uppladdare-ip-172-31-38-203
 
 OK   förväntat DENY  fick DENY  läsarrollen: skriva logg själv
 OK   förväntat ALLOW fick ALLOW läsarrollen antar uppladdarrollen
@@ -1751,7 +1751,7 @@ OK   förväntat DENY  fick DENY  uppladdaren: läsa web/
 OK   förväntat DENY  fick DENY  uppladdaren: skriva till web/
 OK   förväntat DENY  fick DENY  uppladdaren: lägga utkast
 OK   förväntat ALLOW fick ALLOW loggjobbet arkiverar Apache-loggarna
-OK   förväntat ALLOW fick ALLOW arkiverade loggar finns i s3://novatrix-webb-236780468239/loggar/ (2 st)
+OK   förväntat ALLOW fick ALLOW arkiverade loggar finns i s3://novatrix-webb-XXXXXXXXXXXX/loggar/ (2 st)
 
 === Resultat: 71 OK, 0 FEL ===
 Sparat i V43_verifiering_20261024-1258.txt
