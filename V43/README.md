@@ -1386,7 +1386,7 @@ Uppladdarrollen kan **bara** antas av en session som redan kör med läsarrollen
 |---|---|---|
 | Instanstyp | `t3.micro` | Free tier |
 | CPU-kredit | `standard` | Ingen extra kostnad vid hög CPU-last |
-| Senaste versionen när instansen startas, eftersom en körande instans inte uppdateras automatiskt | Senaste Amazon Linux 2023 (via SSM-parameter) | Alltid uppdaterad och gratis |
+| AMI | Senaste Amazon Linux 2023 (via SSM-parameter) | Senaste versionen när instansen startas, och gratis |
 | VPC | Kontots standard-VPC | Ingen NAT gateway behövs |
 | Publik IPv4 | Ja (automatisk) | Nåbar för besökare och SSH |
 | IMDS | v2 krävs, hop limit 1 | Försvårar stöld av rollens nycklar via SSRF |
