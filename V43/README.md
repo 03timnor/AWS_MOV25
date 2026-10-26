@@ -4,9 +4,9 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-10-26*
 
-Veckans uppgift går ut på att konfigurera *IAM*, grupper och policies i *AWS* enligt *Least Privilege*.
+Veckans uppgift går ut på att konfigurera *IAM*, grupper och policies i *AWS* enligt *Least privilege*.
 
-För att uppnå nivån Väl Godkänt skall detta göras automatiserat med kod, använda flera samverkande *IAM*-roller, använda genomtänkt *Least privilege*  och motivera designen.
+För att uppnå nivån Väl Godkänt skall detta göras automatiserat med kod, använda flera samverkande *IAM*-roller, använda genomtänkt *Least privilege* och motivera designen.
 
 ## *__1. Provisionera miljön, användare, grupper och policies__*
 
@@ -853,7 +853,7 @@ echo "Next:     ./V43_verify.sh     (tests every permission and the whole chain)
 echo "Clean up: ./V43_cleanup.sh"
 ```
 
-*V43_config.sh* innehåller gemensamma inställningar, består av föjande kod:
+*V43_config.sh* innehåller gemensamma inställningar, består av följande kod:
 
 ```bash
 # =============================================================================
@@ -1283,7 +1283,7 @@ Allt tas bort med `V43_cleanup.sh`.
 
 | Prefix | Innehåll | Skrivs av | Läses av | Övrigt |
 |---|---|---|---|---|
-| `utkast/` | Nytt innehåll som ska publiceras | Utveckling (allt), marknad (bara `utkast/bilder/`) | Lambdan, utveckling | Uppladdning startar Lambdan |
+| `utkast/` | Nytt innehåll som ska publiceras | Utveckling (allt), marknad (bara `utkast/bilder/`) | Lambdan, utveckling, marknad (bara bilder/) | Uppladdning startar Lambdan |
 | `web/` | Den publicerade sajten | Endast Lambdan | EC2 (läsarrollen), utveckling | Bara tillåtna filtyper |
 | `loggar/` | Arkiverade Apache-loggar | Endast uppladdarrollen | Drift | Tas bort efter 30 dagar |
 
@@ -1386,7 +1386,7 @@ Uppladdarrollen kan **bara** antas av en session som redan kör med läsarrollen
 |---|---|---|
 | Instanstyp | `t3.micro` | Free tier |
 | CPU-kredit | `standard` | Ingen extra kostnad vid hög CPU-last |
-| AMI | Senaste Amazon Linux 2023 (via SSM-parameter) | Alltid uppdaterad och gratis |
+| Senaste versionen när instansen startas, eftersom en körande instans inte uppdateras automatiskt | Senaste Amazon Linux 2023 (via SSM-parameter) | Alltid uppdaterad och gratis |
 | VPC | Kontots standard-VPC | Ingen NAT gateway behövs |
 | Publik IPv4 | Ja (automatisk) | Nåbar för besökare och SSH |
 | IMDS | v2 krävs, hop limit 1 | Försvårar stöld av rollens nycklar via SSRF |
@@ -1401,7 +1401,7 @@ Uppladdarrollen kan **bara** antas av en session som redan kör med läsarrollen
 | `httpd` | Tjänst | Apache, visar `/var/www/html` | Alltid |
 | `/usr/local/bin/novatrix-sync` | Script | `aws s3 sync` från `web/` till `/var/www/html` | Via timer |
 | `novatrix-sync.timer` | systemd-timer | Startar synken | 2 min efter uppstart, sedan var 30:e minut |
-| `/usr/local/bin/s3-curl` | Script | Läser/skriver S3 med bara `curl`, IMDSv2 och SigV4 | Manuellt |
+| `/usr/local/bin/s3-curl` | Script | Läser S3 med bara curl, IMDSv2 och SigV4 (skrivning nekas av rollen)| Manuellt |
 | `/usr/local/bin/som-uppladdare` | Script | Antar uppladdarrollen och kör ett kommando som den (role chaining) | Manuellt och av loggjobbet |
 | `/usr/local/bin/novatrix-loggar` | Script | Komprimerar och laddar upp Apache-loggar till `loggar/` | Via timer |
 | `novatrix-loggar.timer` | systemd-timer | Startar loggjobbet | En gång per dygn |
@@ -1541,7 +1541,7 @@ flowchart LR
 
 ##  *__3. Least privilege och motivering__*
 
-Miljön är uppbyggd så att varje identitet och tjänst endast får de behörigheter den behöver, bara på de resurser som den behöver och bara under dem villkor som gäller. Vilket är syftet med *Least privilege* och ingår även i samtliga delar av motiveringen.
+Miljön är uppbyggd så att varje identitet och tjänst endast får de behörigheter den behöver, bara på de resurser som den behöver och bara under de villkor som gäller. Vilket är syftet med *Least privilege* och ingår även i samtliga delar av motiveringen.
 
 Användarnas behörigheter hanteras via grupper, när en ny medarbetare börjar läggs deras användarkonto med i en grupp som delar ut behörigheter. Detta gör alla behörigheter mer spårbara, enklare att hantera och att hålla koll på.
 
@@ -1556,7 +1556,7 @@ Grundprincipen är simpel, behövs det inte så skall man inte ha det. Det är d
 | **Dataflöde åt ett håll** | Ingen komponent läser och skriver samma prefix | Lambdan läser `utkast/` och skriver `web/`, aldrig tvärtom, och kan därför inte trigga sig själv |
 | **En kontrollpunkt** | Ingen människa kan skriva till sajten direkt | Allt går via Lambdan, som stoppar otillåtna filtyper (t.ex. `.php`) |
 | **Skrivrätt bara vid behov** | Role chaining: skrivrätten finns i en separat roll som måste begäras | Läsarrollen kan inte skriva. Den måste anta uppladdarrollen, som gäller i 15 minuter och bara för `loggar/` |
-| **Begränsat vem som får anta roller** | Trust policies och resource policies | Bara läsarrollen får anta uppladdarrollen. Bara er bucket i ert konto får starta Lambdan |
+| **Begränsat vem som får anta roller** | Trust policies och resource policies | Bara läsarrollen får anta uppladdarrollen. Bara vår bucket i vårt konto får starta Lambdan |
 | **Inga fasta nycklar** | Tjänster får tillfälliga nycklar via roller | EC2 och Lambda har inga sparade nycklar. IMDSv2 skyddar EC2:s nycklar |
 | **Ingen eskalering** | Ingen kan ge sig själv mer rätt | Utveckling saknar `iam:PassRole` och `UpdateFunctionConfiguration` och kan inte byta Lambdans roll |
 
