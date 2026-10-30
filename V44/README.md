@@ -1,0 +1,5 @@
+# Nätverk och säkerhet
+
+Veckans uppgift går ut på att skapa ett säkert nätverk. Lösningen skall använda sig av *VPC* med subnät, konfigurerad routing och använda *Defence in depth* med *Security groups* och *NACL*. Nätverket skall vara förberett för nästa veckas uppgift som innehåller en databas så ett privat subnät skall skapas för databasen.
+
+För att uppnå nivå Väl Godkänt skall man tillämpa *Defence in depth* genom hela lösningen, beskriva vilka hot som lagren skyddar emot. Miljön skall skapas med kod.
