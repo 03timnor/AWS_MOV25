@@ -9,4 +9,4 @@
 - [x] [V43](https://github.com/03timnor/AWS_MOV25/tree/main/V43)
 
 ## *__V44 - Nätverk och säkerhet__*
-- [ ] [V44](https://github.com/03timnor/AWS_MOV25/tree/main/V44)
+- [x] [V44](https://github.com/03timnor/AWS_MOV25/tree/main/V44)
