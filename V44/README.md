@@ -4,11 +4,11 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-10-31*
 
-Veckans uppgift går ut på att skapa ett säkert nätverk. Lösningen skall använda sig av *VPC* med subnät, konfigurerad routing och använda *Defence in depth* med *Security groups* och *NACL*. Nätverket skall vara förberett för nästa veckas uppgift som innehåller en databas så ett privat subnät skall skapas för databasen.
+Veckans uppgift går ut på att skapa ett säkert nätverk. Lösningen skall använda sig av *VPC* med subnät, konfigurerad routing och använda *Defense in depth* med *Security groups* och *NACL*. Nätverket skall vara förberett för nästa veckas uppgift som innehåller en databas så ett privat subnät skall skapas för databasen.
 
-För att uppnå nivå Väl Godkänt skall man tillämpa *Defence in depth* genom hela lösningen, beskriva vilka hot som lagren skyddar emot. Miljön skall skapas med kod.
+För att uppnå nivå Väl Godkänt skall man tillämpa *Defense in depth* genom hela lösningen, beskriva vilka hot som lagren skyddar emot. Miljön skall skapas med kod.
 
-## *__1.Provisionera miljön / nätverk__*
+## *__1. Provisionera miljön / nätverk__*
 
 *V44_novatrix.sh* bygger hela miljön, består av följande kod:
 
@@ -1044,7 +1044,7 @@ echo "Next:     ./V44_verify.sh     (tests every permission, the chain AND the n
 echo "Clean up: ./V44_cleanup.sh"
 ```
 
-*V44_novatrix* beskriver nätverket som en mall, består av följande kod:
+*V44_network.yaml* beskriver nätverket som en mall, består av följande kod:
 
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
@@ -2363,17 +2363,17 @@ echo "Done."
 |---|---|---|---|---|
 | VPC | novatrix-vpc | eu-north-1 (Stockholm) | 10.0.0.0/16 | Eget isolerat nätverk, ersätter default-VPC:n från V43. Default security group tömd. |
 | Internet gateway | novatrix-igw | Kopplad till VPC:n | – | Enda vägen mellan VPC:n och internet, används bara av de publika subnäten |
-| Subnät | novatrix-mgmt-a | eu-north-1a, **publikt** | 10.0.0.0/24 | Administrationszon för bastionen. NACL: nacl-mgmt |
-| Subnät | novatrix-web-a | eu-north-1a, **publikt** | 10.0.2.0/24 | Webbservern. NACL: nacl-web |
-| Subnät | novatrix-web-b | eu-north-1b, **publikt** | 10.0.3.0/24 | Reserverat för webbserver 2 eller lastbalanserare. NACL: nacl-web |
-| Subnät | novatrix-data-a | eu-north-1a, **privat** | 10.0.10.0/24 | Förberett för databasen. NACL: nacl-data |
-| Subnät | novatrix-data-b | eu-north-1b, **privat** | 10.0.11.0/24 | Förberett för DB-standby. NACL: nacl-data |
+| Subnät | novatrix-mgmt-a | eu-north-1a, **publikt** | 10.0.0.0/24 | Administrationszon för bastionen. NACL: novatrix-nacl-mgmt |
+| Subnät | novatrix-web-a | eu-north-1a, **publikt** | 10.0.2.0/24 | Webbservern. NACL: novatrix-nacl-web |
+| Subnät | novatrix-web-b | eu-north-1b, **publikt** | 10.0.3.0/24 | Reserverat för webbserver 2 eller lastbalanserare. NACL: novatrix-nacl-web |
+| Subnät | novatrix-data-a | eu-north-1a, **privat** | 10.0.10.0/24 | Förberett för databasen. NACL: novatrix-nacl-data |
+| Subnät | novatrix-data-b | eu-north-1b, **privat** | 10.0.11.0/24 | Förberett för DB-standby. NACL: novatrix-nacl-data |
 | Route table | novatrix-rt-publik | mgmt-a, web-a, web-b | local · 0.0.0.0/0 → IGW · S3 → VPCE | Ger internetåtkomst. S3-trafiken stannar i AWS-nätet |
 | Route table | novatrix-rt-privat | data-a, data-b | Endast local | **Ingen väg till internet**, varken IGW eller NAT |
 | Security group | novatrix-bastion-sg | Bastionen | In: 22 från admin-IP/32 · Ut: 22 till web-sg | Stateful brandvägg per instans |
 | Security group | novatrix-web-sg | Webbservern | In: 80, 443 från alla, 22 från bastion-sg · Ut: 443, 3306 till db-sg | Stateful brandvägg per instans |
 | Security group | novatrix-db-sg | Kommande databas | In: 3306 från web-sg · Ut: inget | Stateful brandvägg per instans |
-| Network ACL | nacl-mgmt / nacl-web / nacl-data | Per subnätnivå | Numrerade regler + `*` DENY | Stateless brandvägg per subnät, andra oberoende lagret |
+| Network ACL | novatrix-nacl-mgmt / -web / -data | Per subnätnivå | Numrerade regler + `*` DENY | Stateless brandvägg per subnät, andra oberoende lagret |
 | EC2 | novatrix-bastion | mgmt-a | Privat 10.0.0.86 + publik IP | Hoppserver. Ingen IAM-roll, ingen internetåtkomst, sshd tillåter bara tunnlar till port 22, krypterad disk, IMDSv2 |
 | EC2 | novatrix-webb | web-a | Privat 10.0.2.14 + publik IP | Apache HTTP/HTTPS, läsarroll mot S3 web/, härdad SSH (bara från bastionen), säkerhetshuvuden, krypterad disk, IMDSv2 |
 | VPC endpoint | S3 gateway endpoint | rt-publik | vpce-… | Endpoint-policy: bara Novatrix-bucketen och Amazon Linux-paketförrådet |
@@ -2386,7 +2386,7 @@ echo "Done."
 
 | # | Från | Till | Port | Resultat | Lager som avgör | Verifierat i |
 |---|---|---|---|---|---|---|
-| 1 | Internet | Webbservern | 80 (HTTP) | ✅ Tillåts | NACL-web 100 + web-sg | verify 2, 4.4, flödeslogg |
+| 1 | Internet | Webbservern | 80 (HTTP) | ✅ Tillåts | NACL-web 100 + web-sg | verify 2, 4.4 |
 | 2 | Internet | Webbservern | 443 (HTTPS) | ✅ Tillåts | NACL-web 110 + web-sg | verify 2, 4.4, flödeslogg ACCEPT |
 | 3 | Admin-IP | Bastionen | 22 (SSH) | ✅ Tillåts | NACL-mgmt 100 + bastion-sg | verify 4.4, flödeslogg ACCEPT |
 | 4 | Bastionen | Webbservern | 22 (SSH) | ✅ Tillåts | bastion-sg ut → web-sg in (bara från bastion-sg) + NACL-mgmt 110 / NACL-web 120 | verify 3, 4.5 |
@@ -2395,16 +2395,16 @@ echo "Done."
 | 7 | Webbservern | Databasen | 3306 | ✅ Förberett | web-sg → db-sg + NACL-web 120 / NACL-data 100 | regeltabeller verify 4.2–4.3 |
 | 8 | Internet | Webbservern | 22 (SSH) | ❌ Blockeras | NACL-web (22 bara från mgmt) **och** web-sg (22 bara från bastion-sg) | verify 4.4, flödeslogg REJECT |
 | 9 | Internet | Webbservern | 3306, 8080, 3389 | ❌ Blockeras | NACL-web (ingen regel) **och** web-sg | verify 4.4, flödeslogg REJECT |
-| 10 | Annan IP än admin | Bastionen | 22 | ❌ Blockeras | NACL-mgmt **och** bastion-sg (bara admin-IP/32) | regeltabeller + flödeslogg (skanningar) |
+| 10 | Annan IP än admin | Bastionen | 22 | ❌ Blockeras | NACL-mgmt **och** bastion-sg (bara admin-IP/32) | regeltabeller verify 4.2–4.3 |
 | 11 | Internet | Bastionen | 80, 443 | ❌ Blockeras | NACL-mgmt **och** bastion-sg | verify 4.4 |
 | 12 | Internet | Databasen | alla | ❌ Omöjligt | Ingen publik IP, ingen route, NACL-data, db-sg | regeltabeller + route table |
 | 13 | Bastionen | Webbservern | 80 | ❌ Blockeras | bastion-sg ut (bara 22) + NACL-mgmt ut | verify 4.5 |
-| 14 | Bastionen | Internet | 443 m.fl. | ❌ Blockeras | bastion-sg ut + NACL-mgmt ut | verify 4.5, flödeslogg REJECT |
+| 14 | Bastionen | Internet | 443 | ❌ Blockeras | bastion-sg ut + NACL-mgmt ut | verify 4.5 |
 | 15 | SSH-tunnel via bastionen | Webbservern 80 / databasen 3306 | – | ❌ Blockeras | sshd `PermitOpen *:22` (och bastion-sg) | verify 4.5 |
 | 16 | Webbservern | Internet | 80 (HTTP) | ❌ Blockeras | web-sg ut (bara 443) | verify 4.6 |
 | 17 | Webbservern | Internet | 22 (SSH) | ❌ Blockeras | web-sg ut | verify 4.6 |
 | 18 | Webbservern | Bastionen | 22 | ❌ Blockeras | web-sg ut + bastion-sg in + NACL-mgmt in | verify 4.6 |
-| 19 | Webbservern / bastionen | Internet | 123 (NTP) | ❌ Blockeras | SG ut. Klockan synkas ändå via AWS interna tidstjänst | flödeslogg REJECT |
+| 19 | Internet ↔ servrarna | – | 123 (NTP, UDP) | ❌ Blockeras | Ingen SG- eller NACL-regel tillåter UDP 123, i någon riktning. Klockan synkas ändå via AWS interna tidstjänst | flödeslogg: 289 REJECT mot port 123 |
 | 20 | Databasen | Var som helst | alla | ❌ Blockeras | db-sg ut + NACL-data ut + ingen route | regeltabeller |
 | 21 | Instansrollens nycklar utanför VPC:n | S3 | 443 | ❌ Nekas | Bucket policy `aws:SourceVpce` | verify 4.7 |
 | 22 | Webbservern | Annan S3-bucket i regionen | 443 | ❌ Nekas | Endpoint-policyn | endpoint-policy (mallen) |
@@ -2417,7 +2417,7 @@ __Förklaring:__ ✅ tillåts · ❌ blockeras. Under *Verifierat i* står vilke
 
 ### Defense in depth
 
-*Defense in depth* uppfylls genom att varje hot möts av flera oberoende lager som till exempel nätverssegmentering, *NACL*, routing, *Bastion*, *Security groups*, *IAM* värdhantering och kryptering. Om ett lager fallerar räcker det inte för att en angripare skall nå känsliga resurser. Flödesloggarna gör försöken synliga i efterhand.
+*Defense in depth* uppfylls genom att varje hot möts av flera oberoende lager som till exempel nätverkssegmentering, *NACL*, routing, *Bastion*, *Security groups*, *IAM*, värdhantering och kryptering. Om ett lager fallerar räcker det inte för att en angripare skall nå känsliga resurser. Flödesloggarna gör försöken synliga i efterhand.
 
 ### Lager
 
@@ -2426,12 +2426,12 @@ __Förklaring:__ ✅ tillåts · ❌ blockeras. Under *Verifierat i* står vilke
 | **1. Segmentering** | Tre nivåer i egna subnät: mgmt, web och data | En kapad webbserver kommer inte åt admin-zonen |
 | **2. Routing** | Datanivån saknar route till internet och publika IP-adresser | Databasen kan inte nås utifrån, även om en brandväggsregel skulle bli fel |
 | **3. Network ACL:er** | Stateless regler per subnät med implicit DENY | Portskanningar stoppas redan vid subnätgränsen, även om en security group öppnats av misstag |
-| **4. Security groups** | Stateful regler per instans som pekar på andra SG:er, och begränsad utgående trafik | Bara bastionen kan SSH:a till webben och bara webben når DB-porten. En kapad server kan inte ringa hem |
+| **4. Security groups** | Stateful regler per instans som pekar på andra SG:er, och begränsad utgående trafik | Bara bastionen kan SSH:a till webben och bara webben når DB-porten. En kapad bastion eller databas når inte internet alls, en kapad webbserver bara på port 443 |
 | **5. Bastion** | En enda SSH-ingång, bara från admin-IP, utan IAM-roll och utan internetåtkomst | Webbserverns port 22 syns inte från internet. En kapad bastion ger inga AWS-rättigheter |
-| **6. Värdhärdning** | SSH utan lösenord och root, inga tunnlar. Apache utan versionsinfo och med säkerhetshuvuden. IMDSv2, krypterade diskar | Lösenordsgissning, SSRF mot metadatatjänsten och riktade exploits |
+| **6. Värdhärdning** | SSH utan lösenord och root. Webbservern tillåter inga SSH-tunnlar, bastionen bara till port 22. Apache utan versionsinfo och med säkerhetshuvuden. IMDSv2, krypterade diskar | Lösenordsgissning, SSRF mot metadatatjänsten och riktade exploits |
 | **7. Kryptering** | HTTPS, TLS-krav mot S3, S3-trafik via VPC-endpoint | Avlyssning och manipulation |
-| **8. Identitet (IAM)** | Minsta privilegium för roller och användare, och ingen människa kan ändra brandväggen | Insiderhot och kapade konton som öppnar portar |
-| **9. Data** | Privat bucket, bucket policy som kräver VPC-endpointen, endpoint-policy som bara släpper vår bucket | Stulna nycklar fungerar inte utanför VPC:n och data kan inte kopieras till angriparens bucket |
+| **8. Identitet (IAM)** | Minsta privilegium för roller och användare. Ingen av Novatrix-användarna (drift, utveckling, marknad) kan ändra brandväggen – det kan bara administratören | Insiderhot och kapade konton som öppnar portar |
+| **9. Data** | Privat bucket, bucket policy som kräver VPC-endpointen, endpoint-policy som bara släpper vår bucket | Stulna nycklar fungerar inte utanför VPC:n, och data kan inte kopieras via endpointen till en annan bucket i regionen |
 | **10. Upptäckt** | Flödesloggar med ACCEPT och REJECT | Gör det möjligt att se skanningar och spåra ett intrång i efterhand |
 | **11. Infrastruktur som kod** | Hela nätverket i `V44_network.yaml` | Klickfel och obemärkta ändringar, eftersom allt kan granskas och återskapas |
 
