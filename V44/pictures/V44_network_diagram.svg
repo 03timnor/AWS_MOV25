@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 900" width="1400" height="900" font-family="Segoe UI, Helvetica, Arial, sans-serif" xmlns:c2pa="http://c2pa.org/manifest"><metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTo5YjQ5MzYyNS1hNzM1LTRhNzMtYjk4Mi0yM2IyMmY3MzEyODgAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaNstntrPhQWc9LJmDgjPkMMAAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDowZGY3ZmM1YS1mY2UzLTQ0ZTctODY1Yi00ZTczNGJhOTdiMjNscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNoDj/HFYdaZzmzn8PYcUEk0AAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggRgb4RyJvjuk5csLxJaHIJVaYPbQTzuvafXmvBNAmhgmkZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaBwS9hf20YlxT+oT/CCCqKMAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRNAAAAAAAAAAAAAAAAAGRoYXNoWCBiILxtsi29YyzWXwXehyxi4TSwUyrGR6sDDku776wZLWRuYW1lbmp1bWJmIG1hbmlmZXN0amV4Y2x1c2lvbnOBomVzdGFydBjNZmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOjliNDkzNjI1LWE3MzUtNGE3My1iOTgyLTIzYjIyZjczMTI4OC9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOjhjZTZmNmVhLTFhZjYtNDAzNy1hMWQxLWFlM2I4NzE0Yzk1NnJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCBGBvhHIm+O6TlywvElocglVpg9tBPO69p9ea8E0CaGCaJjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggzT0gwozG3Wry8V5RmDgYT66CMw7QS4se5mLqrRibpKuiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggp74+wYc3HakEcMhTIb4O9yEdm+kpgXbuyAFkxw9zYGN0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQBOx5d6L6C+b5avw9hQF4QrA6PPZiFzELmxSpOoxMTmuf6aux6cYYOQuFHdebTtZ4cB/wXg7vP9Mzq+Rw7bfEXo=</c2pa:manifest></metadata>
+  <defs>
+    <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E7D32"/></marker>
+    <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#E65100"/></marker>
+    <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1565C0"/></marker>
+    <marker id="aP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6A1B9A"/></marker>
+    <marker id="aS" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+    <marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C62828"/></marker>
+    <style>
+      .t  { font-size: 12px; fill: #1f2937; }
+      .ts { font-size: 11px; fill: #374151; }
+      .tx { font-size: 10px; fill: #4b5563; }
+      .b  { font-weight: 700; }
+      .h  { font-size: 13px; font-weight: 700; fill: #111827; }
+      .c  { text-anchor: middle; }
+      .e  { text-anchor: end; }
+      .lG { font-size: 11px; font-weight: 600; fill: #2E7D32; }
+      .lO { font-size: 11px; font-weight: 600; fill: #E65100; }
+      .lB { font-size: 11px; font-weight: 600; fill: #1565C0; }
+      .lP { font-size: 11px; font-weight: 600; fill: #6A1B9A; }
+      .lR { font-size: 11px; font-weight: 600; fill: #C62828; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="900" fill="#ffffff"/>
+
+  <!-- ============================ Title ============================ -->
+  <text x="20" y="30" font-size="18" font-weight="700" fill="#111827">Novatrix V44 – nätverksdesign med defense in depth</text>
+  <text x="20" y="50" class="ts">Nätverket (VPC, subnät, IGW, route tables, SG, NACL, S3-endpoint, flödesloggar) är kod i V44_network.yaml – stacken novatrix-natverk. Instanserna skapas av V44_novatrix.sh.</text>
+
+  <!-- ============================ Internet ============================ -->
+  <text x="110" y="100" class="h c">Internet</text>
+
+  <rect x="20" y="115" width="180" height="56" rx="8" fill="#F0FDF4" stroke="#2E7D32"/>
+  <text x="110" y="138" class="h c">Besökare</text>
+  <text x="110" y="156" class="tx c">valfri IP-adress</text>
+  <text x="20" y="188" class="lG">HTTP 80 / HTTPS 443 → webben</text>
+
+  <rect x="20" y="240" width="180" height="56" rx="8" fill="#FFF7ED" stroke="#E65100"/>
+  <text x="110" y="263" class="h c">Administratör</text>
+  <text x="110" y="281" class="tx c">endast admin-IP /32</text>
+  <text x="20" y="313" class="lO">SSH 22 → bastionen</text>
+  <text x="20" y="327" class="tx">den enda vägen in för administration</text>
+
+  <rect x="20" y="500" width="180" height="56" rx="8" fill="#FEF2F2" stroke="#C62828"/>
+  <text x="110" y="523" class="h c">Angripare</text>
+  <text x="110" y="541" class="tx c">skanningar, intrångsförsök</text>
+  <text x="20" y="574" class="lR">→ webb 22 / 3306 / 8080 / 3389:</text>
+  <text x="20" y="588" class="tx">REJECT i NACL och SG</text>
+  <text x="20" y="606" class="lR">→ bastion 22 från annan IP:</text>
+  <text x="20" y="620" class="tx">REJECT i NACL och SG</text>
+  <text x="20" y="638" class="lR">→ databasen:</text>
+  <text x="20" y="652" class="tx">inget att nå – ingen publik IP,</text>
+  <text x="20" y="665" class="tx">ingen route från internet</text>
+
+  <!-- ============================ Region ============================ -->
+  <rect x="235" y="65" width="1150" height="820" rx="10" fill="#FAFAFA" stroke="#9CA3AF" stroke-dasharray="6 4"/>
+  <text x="1370" y="84" class="ts e" font-weight="600">AWS-region eu-north-1 (Stockholm)</text>
+
+  <!-- ============================ VPC ============================ -->
+  <rect x="255" y="95" width="745" height="770" rx="10" fill="#ffffff" stroke="#6B21A8" stroke-width="2"/>
+  <text x="270" y="117" class="h" fill="#6B21A8">novatrix-vpc  10.0.0.0/16</text>
+  <text x="270" y="133" class="tx">Flödesloggar på hela VPC:n · inga automatiska publika IP-adresser i något subnät (MapPublicIpOnLaunch av)</text>
+
+  <!-- AZ columns -->
+  <rect x="320" y="142" width="325" height="665" rx="8" fill="none" stroke="#9CA3AF" stroke-dasharray="4 4"/>
+  <text x="482" y="158" class="tx c">tillgänglighetszon eu-north-1a</text>
+  <rect x="665" y="142" width="325" height="665" rx="8" fill="none" stroke="#9CA3AF" stroke-dasharray="4 4"/>
+  <text x="827" y="158" class="tx c">tillgänglighetszon eu-north-1b</text>
+
+  <!-- ===== Tier 1: management ===== -->
+  <rect x="332" y="168" width="301" height="140" rx="6" fill="#FFF3E0" stroke="#E65100"/>
+  <text x="342" y="186" class="t b">mgmt-a  10.0.0.0/24</text>
+  <text x="342" y="200" class="tx">publikt · rt-publik</text>
+  <text x="342" y="214" class="tx">nacl-mgmt: in 22 från admin-IP · ut 22 till web-nivån</text>
+  <rect x="362" y="224" width="250" height="76" rx="5" fill="#ffffff" stroke="#E65100"/>
+  <text x="487" y="241" class="t c b">novatrix-bastion</text>
+  <text x="487" y="256" class="tx c">privat + publik IP · SG: bastion-sg</text>
+  <text x="487" y="270" class="tx c">ingen IAM-roll · sshd: PermitOpen *:22</text>
+  <text x="487" y="284" class="tx c">inga lösenord · IMDSv2 · krypterad disk</text>
+
+  <text x="827" y="190" class="tx c">Inget mgmt-subnät i 1b: bastionen behövs bara i en zon</text>
+  <text x="827" y="203" class="tx c">och kan stoppas när ingen administrerar.</text>
+  <line x1="612" y1="262" x2="690" y2="256" stroke="#9CA3AF" stroke-width="1"/>
+  <circle cx="612" cy="262" r="2.5" fill="#9CA3AF"/>
+  <rect x="690" y="222" width="280" height="66" rx="6" fill="#FEF2F2" stroke="#C62828" stroke-dasharray="4 3"/>
+  <g stroke="#C62828" stroke-width="2.5"><line x1="700" y1="232" x2="710" y2="242"/><line x1="710" y1="232" x2="700" y2="242"/></g>
+  <text x="716" y="241" class="lR">bastion → internet blockeras</text>
+  <text x="700" y="259" class="tx">bastion-sg ut: endast SSH 22 till web-sg.</text>
+  <text x="700" y="273" class="tx">Ingen nedladdning av verktyg, ingen exfiltrering.</text>
+
+  <!-- ===== Tier 2: web ===== -->
+  <rect x="332" y="350" width="301" height="210" rx="6" fill="#E8F5E9" stroke="#2E7D32"/>
+  <text x="342" y="368" class="t b">web-a  10.0.2.0/24</text>
+  <text x="342" y="382" class="tx">publikt · rt-publik</text>
+  <text x="342" y="396" class="tx">nacl-web: in 80, 443 + 22 från mgmt-a</text>
+  <text x="342" y="409" class="tx">ut 443 + 3306 till data-nivån (+ svarstrafik)</text>
+  <rect x="362" y="418" width="250" height="132" rx="5" fill="#ffffff" stroke="#2E7D32"/>
+  <text x="487" y="435" class="t c b">novatrix-webb (Apache)</text>
+  <text x="487" y="450" class="tx c">HTTP 80 + HTTPS 443</text>
+  <text x="487" y="464" class="tx c">privat + publik IP · SG: web-sg</text>
+  <text x="487" y="478" class="tx c">in: 80/443 från alla, 22 från bastion-sg</text>
+  <text x="487" y="492" class="tx c">ut: 443 till alla, 3306 till db-sg</text>
+  <text x="487" y="506" class="tx c">IAM: läsarroll (S3 web/) · IMDSv2</text>
+  <text x="487" y="520" class="tx c">krypterad disk · härdad SSH</text>
+  <text x="487" y="534" class="tx c">säkerhetshuvuden · ingen versionsinfo</text>
+
+  <rect x="677" y="350" width="301" height="210" rx="6" fill="#E8F5E9" stroke="#2E7D32"/>
+  <text x="687" y="368" class="t b">web-b  10.0.3.0/24</text>
+  <text x="687" y="382" class="tx">publikt · rt-publik</text>
+  <text x="687" y="396" class="tx">nacl-web (samma regler som web-a)</text>
+  <rect x="707" y="430" width="240" height="76" rx="5" fill="#ffffff" stroke="#2E7D32" stroke-dasharray="5 4"/>
+  <text x="827" y="463" class="ts c">reserverat: webbserver 2</text>
+  <text x="827" y="478" class="ts c">eller lastbalanserare (ALB)</text>
+
+  <!-- ===== Tier 3: data ===== -->
+  <rect x="332" y="610" width="301" height="160" rx="6" fill="#E3F2FD" stroke="#1565C0"/>
+  <text x="342" y="628" class="t b">data-a  10.0.10.0/24</text>
+  <text x="342" y="642" class="tx">PRIVAT · rt-privat (ingen internetväg)</text>
+  <text x="342" y="656" class="tx">nacl-data: in 3306 från web-nivån</text>
+  <text x="342" y="669" class="tx">ut: endast svar till web-nivån</text>
+  <rect x="362" y="680" width="250" height="78" rx="5" fill="#ffffff" stroke="#1565C0" stroke-dasharray="5 4"/>
+  <text x="487" y="698" class="t c b">kommande databas</text>
+  <text x="487" y="713" class="tx c">port 3306 · SG: db-sg</text>
+  <text x="487" y="727" class="tx c">in: endast från web-sg</text>
+  <text x="487" y="741" class="tx c">ut: ingenting · ingen publik IP</text>
+
+  <rect x="677" y="610" width="301" height="160" rx="6" fill="#E3F2FD" stroke="#1565C0"/>
+  <text x="687" y="628" class="t b">data-b  10.0.11.0/24</text>
+  <text x="687" y="642" class="tx">PRIVAT · rt-privat (ingen internetväg)</text>
+  <text x="687" y="656" class="tx">nacl-data (samma regler som data-a)</text>
+  <rect x="707" y="680" width="240" height="78" rx="5" fill="#ffffff" stroke="#1565C0" stroke-dasharray="5 4"/>
+  <text x="827" y="714" class="ts c">reserverat: DB-standby</text>
+  <text x="827" y="729" class="ts c">(RDS Multi-AZ)</text>
+
+  <text x="627" y="828" class="ts c">DB subnet group <tspan font-weight="700">novatrix-db-subnets</tspan> = data-a + data-b (förberedd för RDS)</text>
+  <text x="627" y="845" class="tx c">Adressblock: mgmt 10.0.0.0/24 · webb 10.0.2.0/23 · data 10.0.10.0/23</text>
+
+  <!-- ============================ Internet gateway ============================ -->
+  <rect x="220" y="300" width="70" height="50" rx="6" fill="#F3E8FF" stroke="#6B21A8" stroke-width="2"/>
+  <text x="255" y="321" class="t c b">IGW</text>
+  <text x="255" y="337" class="tx c">novatrix-igw</text>
+
+  <!-- ============================ Right column ============================ -->
+  <rect x="1030" y="95" width="340" height="115" rx="8" fill="#ffffff" stroke="#6B7280"/>
+  <text x="1200" y="114" class="h c">Route table: novatrix-rt-publik</text>
+  <text x="1042" y="133" class="tx">10.0.0.0/16 → local</text>
+  <text x="1042" y="148" class="tx">0.0.0.0/0 → novatrix-igw</text>
+  <text x="1042" y="163" class="tx">S3-prefixlista (pl-…) → S3 gateway endpoint</text>
+  <text x="1042" y="183" class="tx">Kopplad till: mgmt-a, web-a, web-b</text>
+  <text x="1042" y="198" class="tx">S3-trafiken går via endpointen, inte via IGW</text>
+
+  <rect x="1030" y="222" width="340" height="88" rx="8" fill="#ffffff" stroke="#6B7280"/>
+  <text x="1200" y="241" class="h c">Route table: novatrix-rt-privat</text>
+  <text x="1042" y="260" class="tx">10.0.0.0/16 → local   (inget mer)</text>
+  <text x="1042" y="275" class="tx">Ingen IGW, ingen NAT: ingen väg till eller från internet</text>
+  <text x="1042" y="295" class="tx">Kopplad till: data-a, data-b</text>
+
+  <rect x="1030" y="322" width="340" height="60" rx="8" fill="#F9FAFB" stroke="#D1D5DB"/>
+  <text x="1200" y="341" class="ts c b">VPC:ns huvudtabell (main, skapas av AWS)</text>
+  <text x="1042" y="358" class="tx">10.0.0.0/16 → local · inga subnät kopplade –</text>
+  <text x="1042" y="372" class="tx">alla subnät är uttryckligen kopplade till rt-publik/rt-privat</text>
+
+  <rect x="1030" y="394" width="340" height="118" rx="8" fill="#ffffff" stroke="#6B7280"/>
+  <text x="1200" y="413" class="h c">Security groups (stateful, per instans)</text>
+  <text x="1042" y="432" class="tx"><tspan font-weight="700">bastion-sg</tspan>: in 22 från admin-IP · ut 22 till web-sg</text>
+  <text x="1042" y="447" class="tx"><tspan font-weight="700">web-sg</tspan>: in 80/443 från alla, 22 från bastion-sg</text>
+  <text x="1042" y="461" class="tx">             ut 443 till alla, 3306 till db-sg</text>
+  <text x="1042" y="476" class="tx"><tspan font-weight="700">db-sg</tspan>: in 3306 endast från web-sg · ut: inget</text>
+  <text x="1042" y="491" class="tx"><tspan font-weight="700">default-SG</tspan>: tömd (inga regler in eller ut)</text>
+  <text x="1042" y="505" class="tx">NACL:erna (per subnät) står i respektive subnät till vänster.</text>
+
+  <rect x="1050" y="535" width="320" height="128" rx="8" fill="#FAF5FF" stroke="#6A1B9A"/>
+  <text x="1210" y="554" class="h c">S3: novatrix-webb-&lt;konto&gt;</text>
+  <text x="1062" y="572" class="tx">utkast/ · web/ · loggar/ · Block Public Access på</text>
+  <text x="1062" y="588" class="tx">Bucket policy: kräver TLS · instansrollerna nekas om</text>
+  <text x="1062" y="602" class="tx">anropet inte kommer via S3-endpointen</text>
+  <text x="1062" y="622" class="tx"><tspan font-weight="700">Endpoint-policy</tspan> (på VPCE): bara den här bucketen</text>
+  <text x="1062" y="636" class="tx">+ Amazon Linux-paketförrådet – ingen exfiltrering</text>
+  <text x="1062" y="650" class="tx">till andra buckets i regionen</text>
+
+  <!-- S3 gateway endpoint on the VPC border -->
+  <rect x="972" y="565" width="56" height="40" rx="6" fill="#F3E8FF" stroke="#6A1B9A" stroke-width="2"/>
+  <text x="1000" y="582" class="ts c b">VPCE</text>
+  <text x="1000" y="596" class="tx c">S3 gw</text>
+  <line x1="1028" y1="585" x2="1048" y2="585" stroke="#6A1B9A" stroke-width="2.5" marker-end="url(#aP)"/>
+
+  <rect x="1030" y="690" width="340" height="80" rx="8" fill="#ffffff" stroke="#6B7280"/>
+  <text x="1200" y="709" class="h c">VPC flow logs</text>
+  <text x="1042" y="727" class="tx">→ CloudWatch Logs /novatrix/vpc-flodesloggar</text>
+  <text x="1042" y="742" class="tx">All trafik i VPC:n: ACCEPT och REJECT</text>
+  <text x="1042" y="757" class="tx">60 s aggregering · sparas 7 dagar</text>
+  <line x1="1000" y1="730" x2="1028" y2="730" stroke="#6B7280" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+  <!-- ============================ Allowed flows ============================ -->
+  <!-- visitors -> IGW -> web server -->
+  <path d="M200,150 C228,160 240,240 243,297" fill="none" stroke="#2E7D32" stroke-width="2.5" marker-end="url(#aG)"/>
+  <path d="M290,330 C330,345 325,440 360,445" fill="none" stroke="#2E7D32" stroke-width="2.5" marker-end="url(#aG)"/>
+
+  <!-- admin -> IGW -> bastion -->
+  <path d="M200,268 C212,272 216,290 223,298" fill="none" stroke="#E65100" stroke-width="2.5" marker-end="url(#aO)"/>
+  <path d="M282,300 C300,270 325,256 360,256" fill="none" stroke="#E65100" stroke-width="2.5" marker-end="url(#aO)"/>
+
+  <!-- bastion -> web server -->
+  <line x1="600" y1="300" x2="600" y2="416" stroke="#E65100" stroke-width="2.5" marker-end="url(#aO)"/>
+  <text x="592" y="324" class="lO e">SSH 22</text>
+  <text x="592" y="338" class="tx e">endast från bastion-sg</text>
+
+  <!-- web server -> internet 443 (outbound, via IGW) -->
+  <path d="M362,540 C300,565 252,470 252,354" fill="none" stroke="#475569" stroke-width="1.8" stroke-dasharray="2 3" marker-end="url(#aS)"/>
+
+  <!-- web server -> database (prepared) -->
+  <line x1="600" y1="550" x2="600" y2="678" stroke="#1565C0" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#aB)"/>
+  <text x="592" y="580" class="lB e">3306 (förberett)</text>
+  <text x="592" y="594" class="tx e">endast från web-sg</text>
+
+  <!-- web server -> S3 via gateway endpoint -->
+  <path d="M612,470 L655,470 L655,585 L970,585" fill="none" stroke="#6A1B9A" stroke-width="2.5" marker-end="url(#aP)"/>
+  <text x="668" y="578" class="lP">HTTPS 443 → S3 via gateway endpoint</text>
+
+  <!-- ============================ Blocked flows ============================ -->
+  <!-- attacker -> IGW -> stopped at web-a (NACL + SG) -->
+  <path d="M200,515 C214,450 216,390 226,354" fill="none" stroke="#C62828" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aR)"/>
+  <path d="M282,352 C298,420 310,470 324,494" fill="none" stroke="#C62828" stroke-width="2" stroke-dasharray="6 4"/>
+  <g stroke="#C62828" stroke-width="3"><line x1="325" y1="491" x2="339" y2="505"/><line x1="339" y1="491" x2="325" y2="505"/></g>
+
+  <!-- attacker -> database: nothing to reach -->
+  <path d="M200,545 C228,590 238,660 246,690" fill="none" stroke="#C62828" stroke-width="2" stroke-dasharray="6 4"/>
+  <g stroke="#C62828" stroke-width="3"><line x1="248" y1="688" x2="262" y2="702"/><line x1="262" y1="688" x2="248" y2="702"/></g>
+
+  <!-- ============================ Legend ============================ -->
+  <rect x="20" y="725" width="200" height="160" rx="6" fill="#ffffff" stroke="#D1D5DB"/>
+  <text x="30" y="743" class="ts b">Förklaring</text>
+  <line x1="30" y1="760" x2="62" y2="760" stroke="#2E7D32" stroke-width="2.5"/><text x="68" y="764" class="tx">webbtrafik in (80/443)</text>
+  <line x1="30" y1="778" x2="62" y2="778" stroke="#E65100" stroke-width="2.5"/><text x="68" y="782" class="tx">administration (SSH 22)</text>
+  <line x1="30" y1="796" x2="62" y2="796" stroke="#475569" stroke-width="1.8" stroke-dasharray="2 3"/><text x="68" y="800" class="tx">webbens 443 ut (STS, paket)</text>
+  <line x1="30" y1="814" x2="62" y2="814" stroke="#6A1B9A" stroke-width="2.5"/><text x="68" y="818" class="tx">S3 via gateway endpoint</text>
+  <line x1="30" y1="832" x2="62" y2="832" stroke="#1565C0" stroke-width="2.5" stroke-dasharray="7 5"/><text x="68" y="836" class="tx">förberedd DB-trafik (3306)</text>
+  <line x1="30" y1="850" x2="62" y2="850" stroke="#C62828" stroke-width="2" stroke-dasharray="6 4"/><text x="68" y="854" class="tx">blockeras (✕ = stoppas här)</text>
+  <text x="30" y="874" class="tx">Orange/grön/blå ram = subnätnivå</text>
+</svg>

@@ -430,9 +430,23 @@ if [[ "$SSH_OK" == yes ]]; then
   record ALLOW "$got" "bastionens SSH-härdning aktiv (PermitOpen *:22, inga lösenord)"
   # sshd on the bastion only forwards to port 22 (PermitOpen *:22): it can't be
   # used as a tunnel to the web server's port 80 or the coming database.
-  out=$(with_timeout 20 ssh "${SSH_BASE[@]}" -W "$WEB_PRIV:80" ec2-user@"$BASTION_IP" </dev/null 2>&1)
-  grep -qi "prohibited" <<<"$out" && got=DENY || got=ALLOW
-  record DENY "$got" "SSH-tunnel genom bastionen till $WEB_PRIV:80 (sshd PermitOpen)"
+  # ssh prints the refusal reason ("administratively prohibited") at INFO
+  # level, so these calls use LogLevel=INFO instead of SSH_BASE's ERROR
+  # (otherwise only "stdio forwarding failed" is shown). The first tunnel, to
+  # the allowed port 22, proves the test can tell "open" from "refused".
+  tunnel_check() {   # expected description host:port
+    local out got
+    out=$(with_timeout 20 ssh -i "$KEY_FILE" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KNOWN" \
+            -o ConnectTimeout=10 -o BatchMode=yes -o LogLevel=INFO \
+            -W "$3" ec2-user@"$BASTION_IP" </dev/null 2>&1)
+    if grep -qi "administratively prohibited" <<<"$out"; then got=DENY       # sshd refused the tunnel
+    elif grep -q "SSH-2.0" <<<"$out"; then got=ALLOW                        # tunnel open, got a banner
+    else got=ERROR; echo "     $(head -n 3 <<<"$out")"; fi
+    record "$1" "$got" "$2"
+  }
+  tunnel_check ALLOW "SSH-tunnel genom bastionen till port 22 (kontroll: tillåten port)" "127.0.0.1:22"
+  tunnel_check DENY  "SSH-tunnel genom bastionen till $WEB_PRIV:80 (sshd PermitOpen)" "$WEB_PRIV:80"
+  tunnel_check DENY  "SSH-tunnel genom bastionen till databasporten 10.0.10.10:$DB_PORT" "10.0.10.10:$DB_PORT"
 
   echo; echo "--- 4.6 Från webbservern (det en angripare som tagit över Apache skulle försöka) ---"
   net_check ALLOW "webb -> internet :443 (S3, STS, paketförråd)" remote "curl -s -m 8 -o /dev/null https://checkip.amazonaws.com"
