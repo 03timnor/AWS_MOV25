@@ -2419,7 +2419,7 @@ __Förklaring:__ ✅ tillåts · ❌ blockeras. Under *Verifierat i* står vilke
 
 *Defense in depth* uppfylls genom att varje hot möts av flera oberoende lager som till exempel nätverssegmentering, *NACL*, routing, *Bastion*, *Security groups*, *IAM* värdhantering och kryptering. Om ett lager fallerar räcker det inte för att en angripare skall nå känsliga resurser. Flödesloggarna gör försöken synliga i efterhand.
 
-### Lagren
+### Lager
 
 | Nivå | Vad miljön har | Exempel på vad det stoppar |
 |---|---|---|
