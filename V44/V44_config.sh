@@ -5,6 +5,11 @@
 # Stop Git Bash on Windows from rewriting paths like /aws/lambda/... into C:\...
 export MSYS_NO_PATHCONV=1
 
+# aws.exe on Windows ends its text output lines with \r\n. Bash only strips the
+# \n, so values arrive as e.g. "True\r" and comparisons silently fail. Strip
+# every \r from AWS CLI output (pipefail in the scripts keeps aws's exit code).
+aws() { command aws "$@" | tr -d '\r'; }
+
 REGION="eu-north-1"                        # Stockholm
 TAG_KEY="Projekt"
 TAG_VALUE="novatrix"

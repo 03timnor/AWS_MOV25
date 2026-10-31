@@ -409,19 +409,21 @@ echo "Subnets: mgmt $MGMT_SUBNET, web $WEB_SUBNET   SG: bastion $BASTION_SG, web
 # Every VPC gets a "default" security group that lets its members talk to each
 # other freely. CloudFormation can't manage it, so empty it here: anything
 # launched by mistake without our groups ends up with no access at all.
-RULES=$(aws ec2 describe-security-group-rules --region "$REGION" \
-  --filters Name=group-id,Values="$DEFAULT_SG" \
-  --query 'SecurityGroupRules[].[SecurityGroupRuleId,IsEgress]' --output text)
-while read -r rule egress; do
-  [[ -z "${rule:-}" ]] && continue
-  if [[ "$egress" == "True" ]]; then
-    aws ec2 revoke-security-group-egress --region "$REGION" --group-id "$DEFAULT_SG" \
-      --security-group-rule-ids "$rule" >/dev/null
-  else
-    aws ec2 revoke-security-group-ingress --region "$REGION" --group-id "$DEFAULT_SG" \
-      --security-group-rule-ids "$rule" >/dev/null
-  fi
-done <<<"$RULES"
+default_sg_rules() {   # false = inbound rules, true = outbound rules
+  aws ec2 describe-security-group-rules --region "$REGION" \
+    --filters Name=group-id,Values="$DEFAULT_SG" \
+    --query "SecurityGroupRules[?IsEgress==\`$1\`].SecurityGroupRuleId" --output text
+}
+IN_RULES=$(default_sg_rules false)
+OUT_RULES=$(default_sg_rules true)
+if [[ -n "$IN_RULES" ]]; then
+  aws ec2 revoke-security-group-ingress --region "$REGION" --group-id "$DEFAULT_SG" \
+    --security-group-rule-ids $IN_RULES >/dev/null
+fi
+if [[ -n "$OUT_RULES" ]]; then
+  aws ec2 revoke-security-group-egress --region "$REGION" --group-id "$DEFAULT_SG" \
+    --security-group-rule-ids $OUT_RULES >/dev/null
+fi
 echo "Default security group $DEFAULT_SG emptied (no rules in, no rules out)"
 
 # =============================================================================
