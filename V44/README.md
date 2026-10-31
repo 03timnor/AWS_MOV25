@@ -4,9 +4,9 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-10-31*
 
-Veckans uppgift går ut på att skapa ett säkert nätverk. Lösningen skall använda sig av *VPC* med subnät, konfigurerad routing och använda *Defense in depth* med *Security groups* och *NACL*. Nätverket skall vara förberett för nästa veckas uppgift som innehåller en databas så ett privat subnät skall skapas för databasen.
+Veckans uppgift går ut på att skapa ett säkert nätverk. Lösningen skall använda sig av *VPC* med subnät, konfigurerad routing och använda *Defense in depth* med *Security groups* och *NACL*. Nätverket skall vara förberett för nästa veckas uppgift som innehåller en databas, så ett privat subnät skall skapas för databasen.
 
-För att uppnå nivå Väl Godkänt skall man tillämpa *Defense in depth* genom hela lösningen, beskriva vilka hot som lagren skyddar emot. Miljön skall skapas med kod.
+För att uppnå nivå Väl Godkänt skall man tillämpa *Defense in depth* genom hela lösningen och beskriva vilka hot som lagren skyddar emot. Miljön skall skapas med kod.
 
 ## *__1. Provisionera miljön / nätverk__*
 
@@ -2417,7 +2417,7 @@ __Förklaring:__ ✅ tillåts · ❌ blockeras. Under *Verifierat i* står vilke
 
 ### Defense in depth
 
-*Defense in depth* uppfylls genom att varje hot möts av flera oberoende lager som till exempel nätverkssegmentering, *NACL*, routing, *Bastion*, *Security groups*, *IAM*, värdhantering och kryptering. Om ett lager fallerar räcker det inte för att en angripare skall nå känsliga resurser. Flödesloggarna gör försöken synliga i efterhand.
+*Defense in depth* uppfylls genom att varje hot möts av flera oberoende lager som till exempel nätverkssegmentering, *NACL*, routing, *Bastion*, *Security groups*, *IAM*, värdhärdning och kryptering. Om ett lager fallerar räcker det inte för att en angripare skall nå känsliga resurser. Flödesloggarna gör försöken synliga i efterhand.
 
 ### Lager
 
