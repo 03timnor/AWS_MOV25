@@ -2394,7 +2394,7 @@ echo "Done."
 | 6 | Webbservern | Internet (STS, paketförråd) | 443 | ✅ Tillåts | web-sg ut 443 + NACL-web 110 | verify 4.6 |
 | 7 | Webbservern | Databasen | 3306 | ✅ Förberett | web-sg → db-sg + NACL-web 120 / NACL-data 100 | regeltabeller verify 4.2–4.3 |
 | 8 | Internet | Webbservern | 22 (SSH) | ❌ Blockeras | NACL-web (22 bara från mgmt) **och** web-sg (22 bara från bastion-sg) | verify 4.4, flödeslogg REJECT |
-| 9 | Internet | Webbservern | 3306, 8080, 3389 | ❌ Blockeras | NACL-web (ingen regel) **och** web-sg | verify 4.4, flödeslogg REJECT |
+| 9 | Internet | Webbservern | 3306, 8080, 3389 | ❌ Blockeras | NACL-web (ingen regel) **och** web-sg | verify 4.4, flödeslogg REJECT (3306) |
 | 10 | Annan IP än admin | Bastionen | 22 | ❌ Blockeras | NACL-mgmt **och** bastion-sg (bara admin-IP/32) | regeltabeller verify 4.2–4.3 |
 | 11 | Internet | Bastionen | 80, 443 | ❌ Blockeras | NACL-mgmt **och** bastion-sg | verify 4.4 |
 | 12 | Internet | Databasen | alla | ❌ Omöjligt | Ingen publik IP, ingen route, NACL-data, db-sg | regeltabeller + route table |
@@ -2499,11 +2499,11 @@ Webbservern via *HTTP* och *HTTPS*:
 
 ![alt text](pictures/novatrix_nacl.png)
 
-*SSH* nekad:
+*SSH* direkt till server nekad:
 
 ![alt text](pictures/ssh_deny.png)
 
-*Bastion* tillåten:
+*SSH* via *Bastion* tillåten:
 
 ![alt text](pictures/bastion_allowed.png)
 
