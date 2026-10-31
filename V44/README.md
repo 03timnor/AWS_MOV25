@@ -2413,7 +2413,7 @@ __Förklaring:__ ✅ tillåts · ❌ blockeras. Under *Verifierat i* står vilke
 
 ### Nätverksskiss
 
-![Network diagram – Novatrix V44](pictures/V44_network.svg)
+![Network diagram – Novatrix V44](pictures/V44_novatrix_network.svg)
 
 ### Defense in depth
 

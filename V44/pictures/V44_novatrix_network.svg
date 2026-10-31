@@ -161,14 +161,15 @@
   <text x="1042" y="358" class="tx">10.0.0.0/16 → local · inga subnät kopplade –</text>
   <text x="1042" y="372" class="tx">alla subnät är uttryckligen kopplade till rt-publik/rt-privat</text>
 
-  <rect x="1030" y="394" width="340" height="118" rx="8" fill="#ffffff" stroke="#6B7280"/>
+  <rect x="1030" y="394" width="340" height="132" rx="8" fill="#ffffff" stroke="#6B7280"/>
   <text x="1200" y="413" class="h c">Security groups (stateful, per instans)</text>
   <text x="1042" y="432" class="tx"><tspan font-weight="700">bastion-sg</tspan>: in 22 från admin-IP · ut 22 till web-sg</text>
   <text x="1042" y="447" class="tx"><tspan font-weight="700">web-sg</tspan>: in 80/443 från alla, 22 från bastion-sg</text>
   <text x="1042" y="461" class="tx">             ut 443 till alla, 3306 till db-sg</text>
   <text x="1042" y="476" class="tx"><tspan font-weight="700">db-sg</tspan>: in 3306 endast från web-sg · ut: inget</text>
   <text x="1042" y="491" class="tx"><tspan font-weight="700">default-SG</tspan>: tömd (inga regler in eller ut)</text>
-  <text x="1042" y="505" class="tx">NACL:erna (per subnät) står i respektive subnät till vänster.</text>
+  <text x="1042" y="505" class="tx">NACL:erna står i respektive subnät. Svarstrafik på</text>
+  <text x="1042" y="519" class="tx">ephemeral-portar och ICMP (PMTUD) visas inte i skissen.</text>
 
   <rect x="1050" y="535" width="320" height="128" rx="8" fill="#FAF5FF" stroke="#6A1B9A"/>
   <text x="1210" y="554" class="h c">S3: novatrix-webb-&lt;konto&gt;</text>
