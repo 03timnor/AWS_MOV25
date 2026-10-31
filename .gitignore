@@ -20,4 +20,8 @@ __pycache__/
 
 desktop.ini
 
+.v42_build/
+
 .v43_build/
+
+.v44_build/
