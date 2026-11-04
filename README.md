@@ -15,4 +15,4 @@
 - [x] [V44](https://github.com/03timnor/AWS_MOV25/tree/main/V44)
 
 ## *__V45 - Storage och databas__*
-- [ ] [V45]
+- [ ] [V45](https://github.com/03timnor/AWS_MOV25/tree/main/V45)
