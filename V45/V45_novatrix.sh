@@ -891,6 +891,13 @@ source /etc/novatrix/wordpress.env
 dnf install -y httpd mod_ssl php php-fpm php-mysqlnd mariadb105 amazon-efs-utils
 dnf install -y --setopt=strict=0 php-gd php-mbstring php-xml php-opcache php-intl || true
 
+# --- TLS to the database: RDS requires it (require_secure_transport=ON) ----
+# Trust Amazon RDS's certificate authority, so both the mysql client and PHP
+# verify that they really talk to OUR database (no man-in-the-middle).
+curl -fsSL -o /etc/pki/ca-trust/source/anchors/rds-$REGION.pem \
+  "https://truststore.pki.rds.amazonaws.com/$REGION/$REGION-bundle.pem"
+update-ca-trust extract
+
 # --- SSH hardening: reachable only from the bastion, no forwarding ---------
 cat > /etc/ssh/sshd_config.d/10-novatrix.conf <<'SSHD'
 __SSHD_COMMON__
@@ -1041,7 +1048,8 @@ shift
 pw=$(aws ssm get-parameter --region "$REGION" --name "$param" --with-decryption \
        --query Parameter.Value --output text)
 cnf=$(mktemp); trap 'rm -f "$cnf"' EXIT
-printf '[client]\nhost=%s\nport=%s\nuser=%s\npassword=%s\n' "$DB_HOST" "$DB_PORT" "$user" "$pw" > "$cnf"
+printf '[client]\nhost=%s\nport=%s\nuser=%s\npassword=%s\nssl-ca=/etc/pki/ca-trust/source/anchors/rds-%s.pem\nssl-verify-server-cert\n' \
+  "$DB_HOST" "$DB_PORT" "$user" "$pw" "$REGION" > "$cnf"
 if [[ -n "${NOVATRIX_DUMP:-}" ]]; then mysqldump --defaults-extra-file="$cnf" "$@"
 else mysql --defaults-extra-file="$cnf" "$@"; fi
 SH
@@ -1054,9 +1062,11 @@ cat > /usr/local/bin/novatrix-backup <<'SH'
 set -euo pipefail
 source /etc/novatrix/wordpress.env
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-NOVATRIX_DUMP=1 /usr/local/bin/novatrix-db app --single-transaction --no-tablespaces "$DB_NAME" \
-  | gzip | /usr/local/bin/som-uppladdare aws s3 cp - \
-      "s3://$BUCKET/backup/db/$STAMP-$DB_NAME.sql.gz" --region "$REGION" --only-show-errors
+DUMP=$(mktemp /tmp/novatrix-db-XXXXXX.sql.gz); trap 'rm -f "$DUMP"' EXIT
+# Dump first, upload after: a failed dump never becomes an empty "backup" in S3.
+NOVATRIX_DUMP=1 /usr/local/bin/novatrix-db app --single-transaction --no-tablespaces "$DB_NAME" | gzip > "$DUMP"
+/usr/local/bin/som-uppladdare aws s3 cp "$DUMP" \
+  "s3://$BUCKET/backup/db/$STAMP-$DB_NAME.sql.gz" --region "$REGION" --only-show-errors
 echo "Uploaded backup/db/$STAMP-$DB_NAME.sql.gz"
 tar -czf - -C "$WP_ROOT" wp-content | /usr/local/bin/som-uppladdare aws s3 cp - \
   "s3://$BUCKET/backup/filer/$STAMP-wp-content.tar.gz" --region "$REGION" --only-show-errors
@@ -1121,6 +1131,7 @@ if (isset($_SERVER['HTTP_HOST'])) {
     define('WP_HOME', $novatrix_scheme . '://' . $_SERVER['HTTP_HOST']);
     define('WP_SITEURL', WP_HOME);
 }
+define('MYSQL_CLIENT_FLAGS', MYSQLI_CLIENT_SSL);   // TLS to RDS (CA in the system trust store)
 define('DISABLE_WP_CRON', true);      // runs from systemd (novatrix-wpcron.timer)
 define('DISALLOW_FILE_EDIT', true);   // no PHP editing from the admin panel
 define('FS_METHOD', 'direct');

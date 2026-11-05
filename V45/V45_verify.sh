@@ -401,6 +401,9 @@ else
   record ALLOW "$got" "databasens namn pekar på en privat adress i data-nivån (10.0.10.0/23)"
   echo "WordPress-användarens rättigheter:"
   remote_out "$DBCLI -N -e 'SHOW GRANTS'" | sed 's/IDENTIFIED BY PASSWORD .*//; s/^/    /'
+  echo "Krypterad anslutning: $(remote_out "$DBCLI -N -e \"SHOW SESSION STATUS LIKE 'Ssl_version'\"" | tr '\t' ' ')"
+  remote_check ALLOW "anslutningen till databasen är krypterad (TLS, servercertifikatet verifieras)" \
+    "$DBCLI -N -e \"SHOW SESSION STATUS LIKE 'Ssl_cipher'\" | grep -qE 'Ssl_cipher[[:space:]]+[A-Z0-9_-]+'"
   remote_check ALLOW "WordPress-användaren läser sin databas ($DB_NAME.wp_posts)" \
     "$DBCLI -N -e 'SELECT COUNT(*) FROM $DB_NAME.wp_posts'"
   remote_check DENY  "WordPress-användaren skapar en annan databas" \
