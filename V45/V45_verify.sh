@@ -372,7 +372,7 @@ echo; echo "=== Del 4: WordPress mot databasen (RDS) och den delade lagringen (E
 DB_PRIV=""
 POST_ID=""
 DBCLI="sudo /usr/local/bin/novatrix-db app"
-WPCLI="sudo /usr/local/bin/wp --path=$WP_ROOT --allow-root"
+WPCLI="sudo /usr/bin/php -d memory_limit=512M /usr/local/bin/wp --path=$WP_ROOT --allow-root"
 if [[ "$SSH_OK" != yes ]]; then
   echo "Hoppar över (ingen SSH till webbservern)."
 else

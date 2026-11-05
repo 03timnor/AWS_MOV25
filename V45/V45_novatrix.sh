@@ -1119,7 +1119,8 @@ SQL
 # --- WordPress on EFS (WP-CLI) ----------------------------------------------
 curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
 chmod 755 /usr/local/bin/wp
-WP=(/usr/local/bin/wp --path="$WP_ROOT" --allow-root)
+# 512 MB: PHP's default 128 MB is too little to unpack the WordPress archive.
+WP=(/usr/bin/php -d memory_limit=512M /usr/local/bin/wp --path="$WP_ROOT" --allow-root)
 [[ -f "$WP_ROOT/wp-includes/version.php" ]] || "${WP[@]}" core download --locale=__WP_LOCALE__
 if [[ ! -f "$WP_ROOT/wp-config.php" ]]; then
   "${WP[@]}" config create --dbname="$DB_NAME" --dbuser="$DB_APP_USER" --dbpass="$APP_PW" \
