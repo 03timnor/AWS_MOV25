@@ -6,7 +6,7 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 Veckans uppgift innefattar att börja med *WordPress*-stacken. *WordPress* behöver en databas och lagring aom kopplas ihop med webbservern för att fungera.
 
-Väl Godkänt delen av uppgiften gåt ut på att göra motiverade val av databas och lagringsnivåer, säkra åtkomsten och att miljön skall skapas med kod.
+Väl Godkänt delen av uppgiften går ut på att göra motiverade val av databas och lagringsnivåer, säkra åtkomsten och att miljön skall skapas med kod.
 
 ## *__1. Provisionera miljön__*
 
@@ -3042,7 +3042,247 @@ echo "Done."
 
 ## *__2. Dokumentation__*
 
+### *__Miljön__*
 
+Allt ligger i region **eu-north-1** (Stockholm) och har taggen `Projekt=novatrix`. Nätverket, databasen och den delade lagringen definieras som kod i CloudFormation-stacken **`novatrix-natverk`** (`V45_infra.yaml`). Resten skapas av `V45_novatrix.sh`.
+
+### *__Nätverk__*
+
+| Resurs | Namn | Inställning | Syfte |
+|---|---|---|---|
+| VPC | `novatrix-vpc` | 10.0.0.0/16, DNS-namn på | Eget isolerat nät |
+| Internet gateway | `novatrix-igw` | Kopplad till VPC:n | Väg till internet för de publika subnäten |
+| Subnät | `mgmt-a` | 10.0.0.0/24, eu-north-1a, publikt | Bastion (enda SSH-ingången) |
+| Subnät | `web-a` | 10.0.2.0/24, eu-north-1a, publikt | Webbserver med WordPress |
+| Subnät | `web-b` | 10.0.3.0/24, eu-north-1b, publikt | Reserverat för en andra webbserver |
+| Subnät | `data-a` | 10.0.10.0/24, eu-north-1a, privat | RDS och EFS mount target |
+| Subnät | `data-b` | 10.0.11.0/24, eu-north-1b, privat | EFS mount target (RDS kräver två AZ i subnät-gruppen) |
+| Route table | `novatrix-rt-publik` | local, 0.0.0.0/0 → IGW, S3 → endpoint | För mgmt-a, web-a och web-b |
+| Route table | `novatrix-rt-privat` | Endast local | För data-a och data-b: ingen väg till eller från internet |
+| VPC-endpoint | S3 (gateway) | Släpper bara igenom Novatrix-bucketen och Amazon Linux paketförråd | S3-trafik stannar i AWS nät |
+| Flow logs | `novatrix-flodeslogg` | All trafik (ACCEPT och REJECT), 1 minuts intervall | Loggas till `/novatrix/vpc-flodesloggar`, sparas 7 dagar |
+
+Ingen instans får publik IP automatiskt. Bara de som uttryckligen ber om det får en.
+
+### *__Säkerhetsgrupper (stateful, per resurs)__*
+
+| Grupp | Används av | In | Ut |
+|---|---|---|---|
+| `novatrix-bastion-sg` | Bastion | TCP 22 från admin-IP (/32) | TCP 22 till web-sg |
+| `novatrix-web-sg` | Webbserver | TCP 80 och 443 från 0.0.0.0/0, TCP 22 från bastion-sg, ICMP 3/4 (Path MTU) | TCP 443 till 0.0.0.0/0, TCP 3306 till db-sg, TCP 2049 till efs-sg |
+| `novatrix-db-sg` | RDS | TCP 3306 från web-sg | Endast 127.0.0.1/32 (ingen utgående trafik) |
+| `novatrix-efs-sg` | EFS mount targets | TCP 2049 från web-sg | Endast 127.0.0.1/32 (ingen utgående trafik) |
+| VPC:ns default-grupp | – | Inga regler | Inga regler |
+
+### Network ACL:er (stateless, per subnät)
+
+| NACL | Subnät | In (tillåts) | Ut (tillåts) |
+|---|---|---|---|
+| `novatrix-nacl-mgmt` | mgmt-a | TCP 22 från admin-IP, TCP 32768–60999 från 10.0.2.0/23 | TCP 1024–65535 till admin-IP, TCP 22 till 10.0.2.0/23 |
+| `novatrix-nacl-web` | web-a, web-b | TCP 80 och 443 från alla, TCP 22 från 10.0.0.0/24, TCP 32768–60999 från alla, ICMP 3/4 | TCP 1024–65535 till alla, TCP 443 till alla, TCP 3306 och 2049 till 10.0.10.0/23 |
+| `novatrix-nacl-data` | data-a, data-b | TCP 3306 och 2049 från 10.0.2.0/23 | TCP 32768–60999 till 10.0.2.0/23 |
+
+Allt som inte tillåts nekas av den sista regeln (`*  DENY`).
+
+### *__Databas (RDS)__*
+
+| Inställning | Värde | Motivering |
+|---|---|---|
+| Namn | `novatrix-db` | |
+| Motor | MariaDB 11.8 | Fungerar med WordPress, öppen licens, ingen licenskostnad |
+| Instansklass | db.t4g.micro (Graviton) | Minsta klassen, ingår i Free tier / Free plan och räcker för en mindre WordPress-sajt |
+| Lagring | 20 GiB gp2 | Free tier-gränsen och minsta möjliga storlek |
+| Kryptering i vila | Ja (`aws/rds`) | Gratis med AWS-hanterad nyckel |
+| Kryptering i transit | TLS krävs (`require_secure_transport=ON`), servercertifikatet verifieras | Trafiken mellan webbserver och databas kan inte avlyssnas |
+| Placering | Single-AZ, eu-north-1a | Samma AZ som webbservern: ingen avgift för trafik mellan AZ. Multi-AZ fördubblar kostnaden |
+| Subnät-grupp | `novatrix-db-subnets` (data-a, data-b) | Bara privata subnät |
+| Publikt åtkomlig | Nej | Ingen publik IP och ingen route till internet |
+| Säkerhetsgrupp | `novatrix-db-sg` | Bara webbservern når port 3306 |
+| Automatisk backup | 1 dag, fönster 01:00–01:30 UTC | Free plan tillåter högst 1 dag (se Backup) |
+| Underhållsfönster | Söndag 02:00–02:30 UTC | Lågtrafik |
+| Databas | `wordpress` | |
+| Användare | `novatrixadmin` (master) och `wordpress` | WordPress använder `wordpress`, som bara har rättigheter i databasen `wordpress` och bara får logga in från 10.0.2.0/23. Masteranvändaren används bara en gång, för att skapa `wordpress` |
+
+### *__Delad lagring (EFS)__*
+
+| Inställning | Värde | Motivering |
+|---|---|---|
+| Namn | `novatrix-wordpress-efs` | |
+| Typ | Regional (två AZ), General Purpose | En andra webbserver i web-b kan dela samma filer |
+| Genomströmning | Bursting | Ingen avgift per läst eller skriven GB (Elastic tar betalt per GB) |
+| Kryptering i vila | Ja (`aws/elasticfilesystem`) | Gratis |
+| Kryptering i transit | TLS (amazon-efs-utils) | Krävs av filsystemets policy |
+| Mount targets | data-a och data-b, `novatrix-efs-sg` | Bara privata subnät, bara webbservern når port 2049 |
+| Access point | `novatrix-wordpress-ap`: `/wordpress`, uid/gid 48 (apache), 0755 | Alla klienter skriver som apache, inte ens root på servern blir root på EFS |
+| Filsystemspolicy | Nekar okrypterad trafik. Tillåter bara `novatrix-web-ec2-role` och bara via en access point | |
+| Lifecycle (IA/Archive) | Av | WordPress läser sina filer hela tiden: IA tar betalt per läsning |
+| AWS Backup | Av | Kostar extra. `wp-content` säkerhetskopieras till S3 dagligen |
+| Monteras på | `/var/www/html` på webbservern | Hela WordPress-installationen |
+
+### *__Servrar (EC2)__*
+
+| | Webbserver | Bastion |
+|---|---|---|
+| Namn | `novatrix-webb` | `novatrix-bastion` |
+| Typ / AMI | t3.micro, Amazon Linux 2023 (x86_64) | t3.micro, Amazon Linux 2023 (x86_64) |
+| Subnät | web-a, publik IP | mgmt-a, publik IP |
+| Säkerhetsgrupp | `novatrix-web-sg` | `novatrix-bastion-sg` |
+| IAM-roll | `novatrix-web-ec2-role` | Ingen |
+| Disk | 8 GiB gp3, krypterad | 8 GiB gp3, krypterad |
+| Metadata | Bara IMDSv2, hop-gräns 1 | Bara IMDSv2, hop-gräns 1 |
+| CPU-krediter | Standard (inga extra kostnader) | Standard |
+| SSH | Bara från bastionen, inga lösenord, ingen root, ingen tunnling | Bara från admin-IP, inga lösenord, ingen root, vidarebefordrar bara port 22 |
+| Programvara | Apache (HTTP och HTTPS med självsignerat certifikat), PHP 8.5-FPM, WordPress 7.1 (sv_SE), WP-CLI, MariaDB-klient, amazon-efs-utils | Ingen extra |
+
+### *__Webbserverns tjänster__*
+
+| Tjänst | Körs | Gör |
+|---|---|---|
+| WordPress | Alltid (Apache + PHP-FPM) | Webbplatsen på `/`, filer på EFS, data i RDS |
+| `/statiskt/` | Alltid (Apache) | Statiskt innehåll från S3 `web/` |
+| `novatrix-sync` | Var 30:e minut | Hämtar S3 `web/` till `/var/www/statiskt` |
+| `novatrix-backup` | Dagligen 00:00 UTC | Databasdump och `wp-content` till S3 `backup/` via uppladdarrollen |
+| `novatrix-loggar` | Dagligen | Apache-loggar till S3 `loggar/` via uppladdarrollen |
+| `novatrix-wpcron` | Var 5:e minut | WordPress schemalagda jobb (WordPress egen cron är avstängd) |
+
+Härdning i Apache och PHP: versionsnummer döljs, `xmlrpc.php` blockeras, PHP får inte köras i `wp-content/uploads`, kataloglistning är av och säkerhetshuvuden skickas (X-Frame-Options, nosniff, Referrer-Policy, CSP).
+
+### *__Objektlagring (S3)__*
+
+| Inställning | Värde |
+|---|---|
+| Bucket | `novatrix-webb-<konto-id>` |
+| Publik åtkomst | Helt blockerad (Block Public Access) |
+| Kryptering | SSE-S3 (standard) |
+| Bucket policy | Nekar okrypterad trafik (ej TLS). Webbserverns roller fungerar bara via VPC-endpointen |
+| Händelse | Ny fil i `utkast/` startar Lambda-funktionen `novatrix-publicerare` |
+
+| Prefix | Innehåll | Skrivs av | Raderas |
+|---|---|---|---|
+| `utkast/` | Utkast till statiskt innehåll | Grupperna utveckling och marknad | – |
+| `web/` | Publicerat statiskt innehåll | Bara Lambda (kontrollerar filtyp och storlek) | – |
+| `loggar/` | Apache-loggar | Bara uppladdarrollen | Efter 30 dagar |
+| `backup/db/` | Databasdump (`.sql.gz`) | Bara uppladdarrollen | **Efter 14 dagar** |
+| `backup/filer/` | `wp-content` (`.tar.gz`) | Bara uppladdarrollen | **Efter 14 dagar** |
+| Hela bucketen | Avbrutna uppladdningar | – | Efter 1 dag |
+
+### *__Backup__*
+
+| Vad | Hur | Lagringstid |
+|---|---|---|
+| Databas (S3) | `novatrix-backup` gör en dump dagligen 00:00 UTC | 14 dagar (livscykelregel) |
+| WordPress-filer (S3) | `novatrix-backup` arkiverar `wp-content` dagligen | 14 dagar (livscykelregel) |
+| Databas (RDS) | Automatisk backup med point-in-time restore, fönster 01:00–01:30 UTC | 1 dag (Free plan max) |
+
+Uppladdarrollen kan bara lägga till backuper. Den kan varken läsa, lista eller radera dem, så en angripare på webbservern kan inte förstöra gamla backuper.
+
+### *__Lambda__*
+
+| Namn | Körmiljö | Inställning | Roll |
+|---|---|---|---|
+| `novatrix-publicerare` | Python 3.12 | 128 MB, 15 s timeout. Publicerar bara webbfiltyper upp till 5 MB. Loggar till `/aws/lambda/novatrix-publicerare` (7 dagar) | `novatrix-publicerare-role` |
+
+### *__IAM-roller (maskiner)__*
+
+| Roll | Kan antas av | Får göra |
+|---|---|---|
+| `novatrix-web-ec2-role` | EC2 (webbservern) | Läsa S3 `web/`. Läsa de tre hemligheterna i SSM. Montera och skriva EFS via access pointen. Anta uppladdarrollen |
+| `novatrix-uppladdare-role` | Bara `novatrix-web-ec2-role` | Lägga till filer i S3 `loggar/` och `backup/`. Inget annat |
+| `novatrix-publicerare-role` | Lambda | Läsa `utkast/`, skriva `web/`, skriva sin egen logg |
+| `novatrix-flodeslogg-role` | VPC Flow Logs (bara detta konto) | Skriva till flödesloggarnas logggrupp |
+
+### *__IAM-grupper och användare (människor)__*
+
+| Användare | Grupp | Får göra | Får inte |
+|---|---|---|---|
+| `anna.drift` | `novatrix-drift` | Starta, stoppa och starta om Novatrix-servrar. Se nätverk, databas och EFS. Läsa loggar, flödesloggar och backuper (för återställning) | Ändra nätverk eller databas, läsa lösenord, ändra innehåll eller kod |
+| `erik.utveckling` | `novatrix-utveckling` | Hantera utkast, läsa publicerat innehåll, uppdatera Lambda-koden, läsa publiceringsloggen | Skriva till `web/` direkt, läsa backuper eller lösenord, styra servrar |
+| `maja.marknad` | `novatrix-marknad` | Ladda upp, läsa och lista bilder i `utkast/bilder/` | Allt annat (även radera bilder) |
+
+Användarna får sina rättigheter bara via gruppen. Inga lösenord eller åtkomstnycklar skapas av skripten.
+
+### *__Hemligheter (SSM Parameter Store)__*
+
+| Parameter | Typ | Används av |
+|---|---|---|
+| `/novatrix/db/master-losenord` | SecureString | CloudFormation (skapar RDS) och webbservern vid första start |
+| `/novatrix/db/wordpress-losenord` | SecureString | WordPress och backupjobbet |
+| `/novatrix/wordpress/admin-losenord` | SecureString | WordPress-installationen (admin-kontot) |
+
+Lösenorden slumpas fram av skriptet (32 tecken) och finns aldrig i koden eller repot.
+
+### Säkerhet i lager (defense in depth)
+
+| Lager | Skydd | Skyddar mot |
+|---|---|---|
+| 1. Nätverkssegmentering | Tre nivåer i egna subnät: mgmt, web och data. Data-subnäten har ingen route till internet | Att databas och lagring nås från internet, oavsett brandväggsregler |
+| 2. Ingen publik åtkomst | RDS är inte publikt åtkomlig. RDS och EFS saknar publik IP | Direkta anslutningar utifrån |
+| 3. Network ACL:er | Stateless brandvägg per subnät. Data-nivån tar bara emot 3306 och 2049 från web-nivån | Trafik som slinker förbi en felkonfigurerad säkerhetsgrupp |
+| 4. Säkerhetsgrupper | Stateful brandvägg per resurs med referenser mellan grupper: db-sg och efs-sg släpper bara in web-sg. Ingen utgående trafik från databas och EFS. Default-gruppen är tömd | Att andra servrar (även bastionen) når databas och lagring |
+| 5. Bastion | Enda SSH-ingången, bara från admin-IP. Ingen IAM-roll, vidarebefordrar bara port 22 | Att servrarna nås via SSH från internet och att bastionen används som tunnel till databasen |
+| 6. Kryptering i transit | TLS till RDS (krävs, certifikatet verifieras), TLS till EFS (krävs av policyn), HTTPS till S3 (krävs av bucket policy) | Avlyssning och manipulation av trafik |
+| 7. Kryptering i vila | RDS, EFS och EC2-diskar krypterade med KMS, S3 med SSE-S3 | Läsning av data om lagringsmediet kommer på avvägar |
+| 8. Databasbehörighet | WordPress egen användare: bara databasen `wordpress`, bara från 10.0.2.0/23. Masteranvändaren används inte i drift | Att ett hackat WordPress når andra databaser eller konton |
+| 9. EFS-behörighet | Filsystemspolicy: bara webbserverrollen, bara via access point. Access pointen tvingar uid 48 (apache) | Att andra roller monterar filerna eller att root på servern blir root på EFS |
+| 10. IAM, minsta behörighet | Separata roller per uppgift. Uppladdarrollen kan bara lägga till backuper, inte läsa eller radera dem. Människor får rättigheter bara via grupper | Att en stulen roll eller ett konto gör mer än nödvändigt, och att backuper förstörs |
+| 11. Hemligheter | Slumpade lösenord i SSM Parameter Store (SecureString). Inte i kod, repo eller user data | Läckta lösenord via Git eller skript |
+| 12. Stulna nycklar | IMDSv2 med hop-gräns 1. S3 nekar webbserverns roller utanför VPC-endpointen | SSRF-attacker och användning av stulna nycklar utanför AWS |
+| 13. Server och applikation | SSH utan lösenord och root. Apache/PHP döljer versioner, `xmlrpc.php` blockeras, ingen PHP i uploads, ingen kataloglistning, säkerhetshuvuden | Lösenordsgissning, uppladdade skal och kartläggning av versioner |
+| 14. Loggning och spårbarhet | VPC flow logs (ACCEPT och REJECT), Apache-loggar och Lambda-loggar | Att attacker passerar obemärkt, och ger underlag i efterhand |
+| 15. Backup | Daglig dump och `wp-content` till S3 (14 dagar), RDS automatisk backup (1 dag) | Dataförlust och ransomware |
+
+**Känd begränsning:** stulna nycklar från webbservern kan läsa databaslösenordet i SSM, eftersom det saknas VPC-endpoint för SSM (den kostar pengar). Lösenordet är ändå oanvändbart utifrån, eftersom databasen bara nås från web-nivån (lager 1–4).
+
+### Least privilege
+
+Varje användare, server och roll får endast göra det som de behöver. Allt annat är spärrat. Kan man inte motivera en behörighet så skall man inte ha den.
+
+| Vem | Uppgift | Får | Får inte |
+|---|---|---|---|
+| `anna.drift` (drift) | Övervaka och sköta servrarna | Starta, stoppa och starta om instanser taggade `Projekt=novatrix`. Läsa status för nätverk, RDS och EFS. Läsa loggar och backuper | Terminera servrar, ändra nätverk eller databas, läsa lösenord, ändra innehåll eller kod |
+| `erik.utveckling` (utveckling) | Utveckla innehåll och publiceringskod | Hantera `utkast/`, läsa `web/`, uppdatera Lambda-koden, läsa publiceringsloggen | Skriva till `web/` direkt, ändra Lambdans roll, läsa backuper eller lösenord, styra servrar |
+| `maja.marknad` (marknad) | Ladda upp bilder | Ladda upp, läsa och lista bilder i `utkast/bilder/` | Radera bilder, ändra sidor, allt annat |
+| `novatrix-web-ec2-role` (webbservern) | Köra WordPress | Läsa `web/` i S3, läsa exakt tre hemligheter i SSM, montera EFS via access pointen, anta uppladdarrollen | Skriva till S3, läsa backuper, läsa andra hemligheter, root-åtkomst till EFS, ändra brandväggar |
+| `novatrix-uppladdare-role` | Ladda upp loggar och backuper | Lägga till filer i `loggar/` och `backup/` | Läsa, lista eller radera något, så gamla backuper kan inte förstöras |
+| `novatrix-publicerare-role` (Lambda) | Publicera utkast | Läsa `utkast/`, skriva `web/`, skriva sin egen logg | Radera filer, läsa backuper, skriva utkast (kan inte trigga sig själv) |
+| `novatrix-flodeslogg-role` | Skriva flödesloggar | Skriva till flödesloggarnas logggrupp, bara för detta konto | Allt annat |
+| Bastion | Hopp-server för SSH | Vidarebefordra SSH (port 22) till webbservrarna | Har ingen IAM-roll, når varken databas, EFS eller internet |
+| DB-användaren `wordpress` | WordPress data | Alla rättigheter i databasen `wordpress`, bara från 10.0.2.0/23 | Andra databaser, `mysql.user`, skapa databaser |
+| EFS access point | WordPress filer | Läsa och skriva som apache (uid 48) i `/wordpress` | Root-åtkomst, andra kataloger, okrypterad anslutning |
+
+### *__Motivering__*
+
+#### __Databasmotor: *MariaDB*__
+
+- *WordPress* är byggt för *MariaDB* och *MySQL* och fungerar utan att man behöver göra anpassningar, till skillnad från om man hade använt *Oracle* eller *SQL Server*. *Aurora* hade kunnat gett automatisk skalning och bättre prestanda. Dock ingår inte *Aurora* i free plan och är lite "overkill" för en liten webbsida.
+
+#### __Databaslagring: *20 GiB gp2*__
+
+- *20 GiB* är den minsta storleken som ingår i gratisnivån. *WordPress*-databaser är oftast inte större än några hundra megabyte eftersom bilderna lagras i *EFS*. I drift hade valet landat på *gp3*, då det är billigare per gigabyte och ger fast prestanda oberoende av storleken. Provisionerad *IOPS (io1/io2)* behövs endast för stora databaser och kostar betydligt mer.
+ 
+#### __Backup av databasen: 1 dag just nu, 7 - 14 dagar i drift__
+
+- Free plan tillåter endast en dag. I drift hade det optimalt varit 7 - 14 dagar istället eftersom fel ofta upptäcks sent. Till exempel kan ett plugin förstöra  data. Ett intrång kan upptäckas först efter några dagar. Man behöver då kunna gå tillbaka till en tidpunkt innan skadan skedde. 14 dagar är även samma sommför *S3*-backups.
+
+#### __Instansklass: *db.t4g.micro*__
+
+- En lite webbplats har med en ojämn belastning, då passar *Burstable*-instanserna (*t-klassen*) bra. De samlar *CPU*-krediter när det är lugnt och använder dem när det är hög belastning. *Graviton* (t4g) är billigare än motsvarande *Intel*-instans (*t3*) samt ingår i free plan. Växer instansen till något större kan klassen ändras till en större utan att något behöver byggas om.
+
+#### __*S3 Standard* för backuper__
+
+- *S3*-backups sparas i 14 dagar. Billigare lagringsklasser som *Standard-IA* och *Glacier* har en minsta lagringstid på 30 respektive 14 dagar. Man betalar för hela den tiden även om filen tas bort tidigare. För kortare backuper är därför *Standard* billigast. Om lagringstiden hade vart för månadsbackuper som lagras i ett år hade *Glacier* varit ett bättre val.
+
+####  __Delad lagring: *EFS*, *Regional*, *Bursting*__
+
+- *EFS* gör det möjligt för flera webbservrar att dela samma *WordPress*-filer. Detta behövs för att kunna växa till 2 servrar i 2 zoner. *Regional* lagring sparar filerna i flera zoner. *One Zone* är billigare men försvinner om zonen går ner. *Bursting* kostar bara för lagrad data. *Elastic* tar betalt för varje gigabyte som läses och skrivs. *WordPress* läser sina filer hela tiden. *Bursting* är därför billigast vid låg trafik.
+
+#### __Ingen flytt till *Infrequent Access*__
+
+- *EFS* kan flytta filer som sällan används till en billigare lagringsklass. *WordPress* läser sina *PHP*-filer vid varje sidvisning. Läsningar ifrån *IA* kostar extra och detta hade blivit dyrare, inte billigare.
+
+#### __*Single-AZ* istället för *Multi-AZ*__
+
+- *Multi-AZ* håller en reservdatabas i en annan zon som automatiskt tar över om något går fel, dock fördubblar detta kostnaden. För en mindre företagswebbplats så räcker det att ha möjlighet att återställa ifrån backup, en kortare avbrottstid kan accepteras. Databasen är i samma zon som webbservern. Det blir då ingen avgift för trafik mellan olika zoner. För en kritisk tjänst hade *Multi-AZ* varit värt kostnaden.
 
 ## *__3. Verifiering__*
 
