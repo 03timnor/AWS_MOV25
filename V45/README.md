@@ -3266,7 +3266,7 @@ Varje användare, server och roll får endast göra det som de behöver. Allt an
 
 #### __Instansklass: *db.t4g.micro*__
 
-- En lite webbplats har med en ojämn belastning, då passar *Burstable*-instanserna (*t-klassen*) bra. De samlar *CPU*-krediter när det är lugnt och använder dem när det är hög belastning. *Graviton* (t4g) är billigare än motsvarande *Intel*-instans (*t3*) samt ingår i free plan. Växer instansen till något större kan klassen ändras till en större utan att något behöver byggas om.
+- En lite webbplats har med en ojämn belastning, då passar *Burstable*-instanserna (*t-klassen*) bra. De samlar *CPU*-krediter när det är lugnt och använder dem när det är hög belastning. *Graviton* (*t4g*) är billigare än motsvarande *Intel*-instans (*t3*) samt ingår i free plan. Växer instansen till något större kan klassen ändras till en större utan att något behöver byggas om.
 
 #### __*S3 Standard* för backuper__
 
