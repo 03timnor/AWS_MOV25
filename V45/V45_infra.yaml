@@ -1,0 +1,777 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Novatrix V45 - network, database and shared storage as code. VPC with three
+  tiers (management, web, data), security groups AND network ACLs (defense in
+  depth), S3 gateway endpoint, VPC flow logs, RDS MariaDB in the private data
+  tier and EFS (shared WordPress files) with mount targets in the data tier.
+  Deployed by V45_novatrix.sh with `aws cloudformation deploy`.
+
+# =============================================================================
+# Address plan (10.0.0.0/16, two availability zones)
+#
+#   mgmt-a  10.0.0.0/24   public   bastion host (the only SSH entry point)
+#   web-a   10.0.2.0/24   public   web server (Apache)
+#   web-b   10.0.3.0/24   public   reserved: second web server / load balancer
+#   data-a  10.0.10.0/24  private  RDS MariaDB + EFS mount target, NO internet route
+#   data-b  10.0.11.0/24  private  EFS mount target (the DB subnet group needs two AZs)
+#
+# Web tier = 10.0.2.0/23, data tier = 10.0.10.0/23, so one NACL rule covers both
+# subnets of a tier.
+# =============================================================================
+
+Parameters:
+  AdminCidr:
+    Type: String
+    Description: The only address allowed to SSH to the bastion (your public IP /32)
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/32$'
+    ConstraintDescription: Must be a single host, e.g. 203.0.113.10/32
+  DbPort:
+    Type: Number
+    Default: 3306
+    Description: Database port (MariaDB 3306)
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedValues: [db.t4g.micro, db.t3.micro]
+    Description: Free tier / Free plan classes only - a typo can't create an expensive database
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 20
+    Description: GiB of gp2 storage (20 = free tier allowance and RDS minimum)
+  DbBackupRetentionDays:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 1
+    Description: Days of automated RDS backups (Free plan allows at most 1)
+  DbName:
+    Type: String
+    Default: wordpress
+  DbMasterUsername:
+    Type: String
+    Default: novatrixadmin
+    NoEcho: true
+  WebRoleName:
+    Type: String
+    Default: novatrix-web-ec2-role
+    Description: The web server's instance role - the only principal EFS lets mount
+  SiteBucket:
+    Type: String
+    Description: The Novatrix bucket - the only bucket the S3 endpoint lets through
+  FlowLogGroupName:
+    Type: String
+    Default: /novatrix/vpc-flodesloggar
+  ProjectTag:
+    Type: String
+    Default: novatrix
+
+Mappings:
+  Natverk:
+    Vpc:     { Cidr: 10.0.0.0/16 }
+    MgmtA:   { Cidr: 10.0.0.0/24 }
+    WebA:    { Cidr: 10.0.2.0/24 }
+    WebB:    { Cidr: 10.0.3.0/24 }
+    WebAll:  { Cidr: 10.0.2.0/23 }
+    DataA:   { Cidr: 10.0.10.0/24 }
+    DataB:   { Cidr: 10.0.11.0/24 }
+    DataAll: { Cidr: 10.0.10.0/23 }
+    # Ephemeral (client) ports. Our servers run Linux, which picks source ports
+    # in 32768-60999, so return traffic TO our servers only needs that range.
+    # Visitors and admins can be anything (Windows, NAT), so traffic FROM our
+    # servers back to them uses the wide range 1024-65535.
+    Linux:   { From: 32768, To: 60999 }
+
+Resources:
+  # ===========================================================================
+  # VPC + internet gateway
+  # ===========================================================================
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !FindInMap [Natverk, Vpc, Cidr]
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - { Key: Name, Value: novatrix-vpc }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - { Key: Name, Value: novatrix-igw }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ===========================================================================
+  # Subnets. MapPublicIpOnLaunch is OFF even in the public subnets: only an
+  # instance that explicitly asks for a public IP gets one.
+  # ===========================================================================
+  MgmtSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !FindInMap [Natverk, MgmtA, Cidr]
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: novatrix-mgmt-a (publikt) }
+        - { Key: Niva, Value: mgmt }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  WebSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !FindInMap [Natverk, WebA, Cidr]
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: novatrix-web-a (publikt) }
+        - { Key: Niva, Value: web }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  WebSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !FindInMap [Natverk, WebB, Cidr]
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: novatrix-web-b (publikt) }
+        - { Key: Niva, Value: web }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  DataSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !FindInMap [Natverk, DataA, Cidr]
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: novatrix-data-a (privat) }
+        - { Key: Niva, Value: data }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  DataSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !FindInMap [Natverk, DataB, Cidr]
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: novatrix-data-b (privat) }
+        - { Key: Niva, Value: data }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  # ===========================================================================
+  # Route tables
+  #   public : local + 0.0.0.0/0 -> IGW + S3 prefix list -> gateway endpoint
+  #   private: local ONLY. No IGW, no NAT: the data tier cannot reach or be
+  #            reached from the internet, whatever the firewalls say.
+  # ===========================================================================
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: novatrix-rt-publik }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: novatrix-rt-privat }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  MgmtSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref MgmtSubnetA, RouteTableId: !Ref PublicRouteTable }
+  WebSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref WebSubnetA, RouteTableId: !Ref PublicRouteTable }
+  WebSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref WebSubnetB, RouteTableId: !Ref PublicRouteTable }
+  DataSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref DataSubnetA, RouteTableId: !Ref PrivateRouteTable }
+  DataSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref DataSubnetB, RouteTableId: !Ref PrivateRouteTable }
+
+  # ===========================================================================
+  # S3 gateway endpoint (free). S3 traffic from the public subnets stays on the
+  # AWS network, and the bucket policy can demand that the instance roles only
+  # are used from here (stolen credentials are useless outside the VPC).
+  # The endpoint policy only lets through OUR bucket and the Amazon Linux
+  # package repository - an attacker on the server can't copy data out to his
+  # own bucket in this region.
+  # ===========================================================================
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PublicRouteTable]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EndastNovatrixBucket
+            Effect: Allow
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !Sub arn:aws:s3:::${SiteBucket}
+              - !Sub arn:aws:s3:::${SiteBucket}/*
+          - Sid: AmazonLinuxPaketforrad
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::al2023-repos-${AWS::Region}-de612dc2/*
+
+  # ===========================================================================
+  # Security groups (stateful, per instance). Rules reference OTHER security
+  # groups instead of IP addresses where possible: "only the bastion may SSH",
+  # "only the web servers may reach the database".
+  #
+  # Defining SecurityGroupEgress inline replaces AWS's default "allow all out".
+  # Rules that would create a reference loop are separate resources below.
+  # ===========================================================================
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: novatrix-db-sg
+      GroupDescription: Novatrix RDS database - only the web servers, on the DB port
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        # A security group cannot be completely empty outbound in CloudFormation,
+        # so the only rule points at loopback = the database can start nothing.
+        - { IpProtocol: "-1", CidrIp: 127.0.0.1/32, Description: Ingen utgaende trafik }
+      Tags:
+        - { Key: Name, Value: novatrix-db-sg }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: novatrix-efs-sg
+      GroupDescription: Novatrix EFS mount targets - only the web servers, NFS 2049
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: 127.0.0.1/32, Description: Ingen utgaende trafik }
+      Tags:
+        - { Key: Name, Value: novatrix-efs-sg }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: novatrix-web-sg
+      GroupDescription: Novatrix web server - HTTP/HTTPS from everyone, SSH only from the bastion
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80,  ToPort: 80,  CidrIp: 0.0.0.0/0, Description: HTTP fran internet }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS fran internet }
+        - { IpProtocol: icmp, FromPort: 3, ToPort: 4, CidrIp: 0.0.0.0/0, Description: Path MTU Discovery }
+      SecurityGroupEgress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: "HTTPS ut: S3, STS, paketforrad" }
+        - IpProtocol: tcp
+          FromPort: !Ref DbPort
+          ToPort: !Ref DbPort
+          DestinationSecurityGroupId: !Ref DbSecurityGroup
+          Description: Till databasen (RDS)
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          DestinationSecurityGroupId: !Ref EfsSecurityGroup
+          Description: Till delad lagring (EFS, NFS)
+      Tags:
+        - { Key: Name, Value: novatrix-web-sg }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: novatrix-bastion-sg
+      GroupDescription: Novatrix bastion - SSH only from the admin IP, out only SSH to the web servers
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref AdminCidr, Description: SSH fran admin-IP }
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          DestinationSecurityGroupId: !Ref WebSecurityGroup
+          Description: SSH vidare till webbservrar
+      Tags:
+        - { Key: Name, Value: novatrix-bastion-sg }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  WebIngressSshFromBastion:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WebSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref BastionSecurityGroup
+      Description: SSH endast fran bastionen
+
+  DbIngressFromWeb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DbSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DbPort
+      ToPort: !Ref DbPort
+      SourceSecurityGroupId: !Ref WebSecurityGroup
+      Description: Databasport endast fran webbservrar
+
+  EfsIngressFromWeb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EfsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref WebSecurityGroup
+      Description: NFS endast fran webbservrar
+
+  # ===========================================================================
+  # Network ACLs (stateless, per subnet) - the second, independent firewall.
+  # Stateless means return traffic must be allowed explicitly (ephemeral ports).
+  # Everything not listed hits the implicit rule "*  DENY".
+  # ===========================================================================
+
+  # ----- mgmt tier (bastion) -------------------------------------------------
+  MgmtNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: novatrix-nacl-mgmt }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+  MgmtNaclInSshAdmin:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref MgmtNacl
+      RuleNumber: 100
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref AdminCidr
+      PortRange: { From: 22, To: 22 }
+  MgmtNaclInReturnFromWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref MgmtNacl
+      RuleNumber: 110
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !FindInMap [Natverk, WebAll, Cidr]
+      PortRange: { From: !FindInMap [Natverk, Linux, From], To: !FindInMap [Natverk, Linux, To] }
+  MgmtNaclOutReturnToAdmin:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref MgmtNacl
+      RuleNumber: 100
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref AdminCidr
+      PortRange: { From: 1024, To: 65535 }
+  MgmtNaclOutSshToWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref MgmtNacl
+      RuleNumber: 110
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !FindInMap [Natverk, WebAll, Cidr]
+      PortRange: { From: 22, To: 22 }
+  MgmtNaclAssocA:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref MgmtSubnetA, NetworkAclId: !Ref MgmtNacl }
+
+  # ----- web tier ---------------------------------------------------------------
+  WebNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: novatrix-nacl-web }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+  WebNaclInHttp:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 100
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: 80, To: 80 }
+  WebNaclInHttps:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 110
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: 443, To: 443 }
+  WebNaclInSshFromMgmt:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 120
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !FindInMap [Natverk, MgmtA, Cidr]
+      PortRange: { From: 22, To: 22 }
+  WebNaclInReturn:
+    # Answers to the server's OWN outbound connections (S3, STS, SSM, packages,
+    # wordpress.org, DB, EFS - the EFS client uses non-reserved source ports).
+    # Linux range only, so e.g. 3306, 8080 and 9200 from the internet are
+    # stopped here already - not just by the security group.
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 130
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: !FindInMap [Natverk, Linux, From], To: !FindInMap [Natverk, Linux, To] }
+  WebNaclInPmtud:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 140
+      Egress: false
+      Protocol: 1
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      Icmp: { Type: 3, Code: 4 }
+  WebNaclOutReturn:
+    # Answers to visitors (any client OS) and to the bastion.
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 100
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: 1024, To: 65535 }
+  WebNaclOutHttps:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 110
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: 443, To: 443 }
+  WebNaclOutDb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 120
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !FindInMap [Natverk, DataAll, Cidr]
+      PortRange: { From: !Ref DbPort, To: !Ref DbPort }
+  WebNaclOutNfs:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 130
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !FindInMap [Natverk, DataAll, Cidr]
+      PortRange: { From: 2049, To: 2049 }
+  WebNaclAssocA:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref WebSubnetA, NetworkAclId: !Ref WebNacl }
+  WebNaclAssocB:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref WebSubnetB, NetworkAclId: !Ref WebNacl }
+
+  # ----- data tier (database) ------------------------------------------------
+  DataNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: novatrix-nacl-data }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+  DataNaclInDbFromWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DataNacl
+      RuleNumber: 100
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !FindInMap [Natverk, WebAll, Cidr]
+      PortRange: { From: !Ref DbPort, To: !Ref DbPort }
+  DataNaclInNfsFromWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DataNacl
+      RuleNumber: 110
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !FindInMap [Natverk, WebAll, Cidr]
+      PortRange: { From: 2049, To: 2049 }
+  DataNaclOutReturnToWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DataNacl
+      RuleNumber: 100
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !FindInMap [Natverk, WebAll, Cidr]
+      PortRange: { From: !FindInMap [Natverk, Linux, From], To: !FindInMap [Natverk, Linux, To] }
+  DataNaclAssocA:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref DataSubnetA, NetworkAclId: !Ref DataNacl }
+  DataNaclAssocB:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref DataSubnetB, NetworkAclId: !Ref DataNacl }
+
+  # ===========================================================================
+  # Database: RDS MariaDB in the private data tier.
+  # ===========================================================================
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: novatrix-db-subnets
+      DBSubnetGroupDescription: Novatrix - private subnets for the coming database
+      SubnetIds: [!Ref DataSubnetA, !Ref DataSubnetB]
+      Tags:
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  # Choices (cost first, see the documentation):
+  #   db.t4g.micro, 20 GiB gp2, Single-AZ  - all inside the free tier / Free plan
+  #   same AZ as the web server            - no cross-AZ data transfer charges
+  #   PubliclyAccessible false             - no public IP, and the subnet has no
+  #                                          internet route anyway
+  #   StorageEncrypted (aws/rds key)       - encryption at rest, free
+  #   BackupRetentionPeriod 1              - automated backups + point-in-time
+  #                                          restore for the last day (Free plan max)
+  # The master password is never in this file or on the command line: CloudFormation
+  # reads it from SSM Parameter Store (created by V45_novatrix.sh).
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete          # lab: cleanup removes everything (default would leave a paid snapshot)
+    UpdateReplacePolicy: Snapshot   # but never lose data if a change forces a replacement
+    Properties:
+      DBInstanceIdentifier: novatrix-db
+      Engine: mariadb
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp2
+      StorageEncrypted: true
+      MultiAZ: false
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [!Ref DbSecurityGroup]
+      PubliclyAccessible: false
+      Port: !Ref DbPort
+      DBName: !Ref DbName
+      MasterUsername: !Ref DbMasterUsername
+      MasterUserPassword: "{{resolve:ssm-secure:/novatrix/db/master-losenord}}"
+      BackupRetentionPeriod: !Ref DbBackupRetentionDays
+      PreferredBackupWindow: "01:00-01:30"              # UTC, after the S3 backup at 00:00
+      PreferredMaintenanceWindow: "sun:02:00-sun:02:30"
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      DeleteAutomatedBackups: true
+      DeletionProtection: false
+      EnablePerformanceInsights: false
+      MonitoringInterval: 0
+      Tags:
+        - { Key: Name, Value: novatrix-db }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  # ===========================================================================
+  # Shared storage: EFS for the WordPress files. Every web server mounts the
+  # same file system, so a second server in web-b serves the same site.
+  #
+  # Three locks besides the network:
+  #   1. file system policy: only encrypted (TLS) connections, only the web
+  #      server's role, only through an access point
+  #   2. access point: every client is forced to uid/gid 48 (apache) in
+  #      /wordpress - not even root on the server can act as root on EFS
+  #   3. encryption at rest (aws/elasticfilesystem key)
+  # ===========================================================================
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting       # no charge per GB read/written (elastic charges per GB)
+      BackupPolicy: { Status: DISABLED }   # AWS Backup costs extra; wp-content goes to S3 backup/ daily
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EndastKrypteradTrafik
+            Effect: Deny
+            Principal: { AWS: "*" }
+            Action: "*"
+            Condition:
+              Bool: { "aws:SecureTransport": "false" }
+          - Sid: EndastWebbserverrollenViaAccessPoint
+            Effect: Allow
+            Principal: { AWS: "*" }
+            Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+            Condition:
+              ArnEquals: { "aws:PrincipalArn": !Sub "arn:aws:iam::${AWS::AccountId}:role/${WebRoleName}" }
+              StringLike: { "elasticfilesystem:AccessPointArn": !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point/*" }
+      FileSystemTags:
+        - { Key: Name, Value: novatrix-wordpress-efs }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  WordpressAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser: { Uid: "48", Gid: "48" }          # apache on Amazon Linux 2023
+      RootDirectory:
+        Path: /wordpress
+        CreationInfo: { OwnerUid: "48", OwnerGid: "48", Permissions: "0755" }
+      AccessPointTags:
+        - { Key: Name, Value: novatrix-wordpress-ap }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  # Mount targets in the PRIVATE data subnets, one per AZ (the web server uses
+  # the one in its own AZ: no cross-AZ traffic).
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref DataSubnetA
+      SecurityGroups: [!Ref EfsSecurityGroup]
+  EfsMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref DataSubnetB
+      SecurityGroups: [!Ref EfsSecurityGroup]
+
+  # ===========================================================================
+  # VPC flow logs: every accepted AND rejected connection attempt in the VPC,
+  # 1-minute aggregation, kept 7 days. This is how we SHOW what is let through
+  # and what is blocked - and how an attack would be detected afterwards.
+  # ===========================================================================
+  FlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref FlowLogGroupName
+      RetentionInDays: 7
+      Tags:
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  FlowLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: novatrix-flodeslogg-role
+      Description: Lets the VPC flow log service write to the Novatrix flow log group only
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: vpc-flow-logs.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:   # confused deputy protection: only for OUR account
+              StringEquals: { "aws:SourceAccount": !Ref AWS::AccountId }
+              ArnLike: { "aws:SourceArn": !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*" }
+      Policies:
+        - PolicyName: novatrix-flodeslogg-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !Sub "${FlowLogGroup.Arn}"
+              - Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
+      Tags:
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+  VpcFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceId: !Ref Vpc
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref FlowLogGroup
+      DeliverLogsPermissionArn: !GetAtt FlowLogRole.Arn
+      MaxAggregationInterval: 60
+      Tags:
+        - { Key: Name, Value: novatrix-flodeslogg }
+        - { Key: Projekt, Value: !Ref ProjectTag }
+
+Outputs:
+  VpcId:                { Value: !Ref Vpc }
+  DefaultSecurityGroupId: { Value: !GetAtt Vpc.DefaultSecurityGroup }
+  MgmtSubnetAId:        { Value: !Ref MgmtSubnetA }
+  WebSubnetAId:         { Value: !Ref WebSubnetA }
+  WebSubnetBId:         { Value: !Ref WebSubnetB }
+  DataSubnetAId:        { Value: !Ref DataSubnetA }
+  DataSubnetBId:        { Value: !Ref DataSubnetB }
+  PublicRouteTableId:   { Value: !Ref PublicRouteTable }
+  PrivateRouteTableId:  { Value: !Ref PrivateRouteTable }
+  BastionSgId:          { Value: !Ref BastionSecurityGroup }
+  WebSgId:              { Value: !Ref WebSecurityGroup }
+  DbSgId:               { Value: !Ref DbSecurityGroup }
+  EfsSgId:              { Value: !Ref EfsSecurityGroup }
+  MgmtNaclId:           { Value: !Ref MgmtNacl }
+  WebNaclId:            { Value: !Ref WebNacl }
+  DataNaclId:           { Value: !Ref DataNacl }
+  S3EndpointId:         { Value: !Ref S3Endpoint }
+  DbSubnetGroupName:    { Value: !Ref DbSubnetGroup }
+  FlowLogGroupName:     { Value: !Ref FlowLogGroup }
+  DbInstanceId:         { Value: !Ref Database }
+  DbEndpoint:           { Value: !GetAtt Database.Endpoint.Address }
+  DbPort:               { Value: !GetAtt Database.Endpoint.Port }
+  FileSystemId:         { Value: !Ref FileSystem }
+  AccessPointId:        { Value: !Ref WordpressAccessPoint }
+  AccessPointArn:       { Value: !GetAtt WordpressAccessPoint.Arn }
