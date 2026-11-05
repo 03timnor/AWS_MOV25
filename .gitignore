@@ -6,6 +6,12 @@ id_rsa.pub
 
 *.log
 
+*.ppk
+
+*.key
+
+id_*
+
 *.local.*
 
 .env
@@ -20,8 +26,20 @@ __pycache__/
 
 desktop.ini
 
+wp-config.php
+
+*.sql
+
+*.sql.gz
+
+*.tar.gz
+
 .v42_build/
 
 .v43_build/
 
 .v44_build/
+
+.v45_build/
+
+V4*_verifiering_*.txt
