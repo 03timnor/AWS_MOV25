@@ -16,3 +16,12 @@
 
 ## *__V45 - Storage och databas__*
 - [ ] [V45](https://github.com/03timnor/AWS_MOV25/tree/main/V45)
+
+## *__V46 - IaC med CloudFormation__*
+- [ ] [V46]()
+
+## *__V47 - Skalbarhet och tillgänglighet__*
+- [ ] [V47]()
+
+## *__V48 - Monitorering och cloud natives__*
+- [ ] [V48]()
