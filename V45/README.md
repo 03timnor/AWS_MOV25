@@ -3101,7 +3101,7 @@ Ingen instans får publik IP automatiskt. Bara de som uttryckligen ber om det f�
 | `novatrix-efs-sg` | EFS mount targets | TCP 2049 från web-sg | Endast 127.0.0.1/32 (ingen utgående trafik) |
 | VPC:ns default-grupp | – | Inga regler | Inga regler |
 
-### Network ACL:er (stateless, per subnät)
+### *__Network ACL:er (stateless, per subnät)__*
 
 | NACL | Subnät | In (tillåts) | Ut (tillåts) |
 |---|---|---|---|
@@ -3238,7 +3238,7 @@ Användarna får sina rättigheter bara via gruppen. Inga lösenord eller åtkom
 
 Lösenorden slumpas fram av skriptet (32 tecken) och finns aldrig i koden eller repot.
 
-### Säkerhet i lager (defense in depth)
+### *__Säkerhet i lager (defense in depth)__*
 
 | Lager | Skydd | Skyddar mot |
 |---|---|---|
@@ -3260,7 +3260,7 @@ Lösenorden slumpas fram av skriptet (32 tecken) och finns aldrig i koden eller 
 
 **Känd begränsning:** stulna nycklar från webbservern kan läsa databaslösenordet i SSM, eftersom det saknas VPC-endpoint för SSM (den kostar pengar). Lösenordet är ändå oanvändbart utifrån, eftersom databasen bara nås från web-nivån (lager 1–4).
 
-### Least privilege
+### *__Least privilege__*
 
 Varje användare, server och roll får endast göra det de behöver. Allt annat är spärrat. Kan man inte motivera en behörighet så skall man inte ha den.
 
@@ -3277,7 +3277,7 @@ Varje användare, server och roll får endast göra det de behöver. Allt annat 
 | DB-användaren `wordpress` | WordPress-data | Alla rättigheter i databasen `wordpress`, bara från 10.0.2.0/23 | Andra databaser, `mysql.user`, skapa databaser |
 | EFS access point | WordPress-filer | Läsa och skriva som apache (uid 48) i `/wordpress` | Root-åtkomst, andra kataloger, okrypterad anslutning |
 
-### Mappstruktur
+### *__Mappstruktur__*
 
 ```
 AWS_MOV25/
