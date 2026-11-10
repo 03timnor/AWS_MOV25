@@ -3044,7 +3044,7 @@ echo "Done."
 
 ### *__Miljön__*
 
-Allt ligger i region **eu-north-1** (Stockholm) och har taggen `Projekt=novatrix`. Nätverket, databasen och den delade lagringen definieras som kod i CloudFormation-stacken **`novatrix-natverk`** (`V45_infra.yaml`). Resten skapas av `V45_novatrix.sh`.
+Allt ligger i region __eu-north-1__ (Stockholm) och har taggen `Projekt=novatrix`. Nätverket, databasen och den delade lagringen definieras som kod i CloudFormation-stacken __`novatrix-natverk`__ (`V45_infra.yaml`). Resten skapas av `V45_novatrix.sh`.
 
 ### *__Nätverk__*
 
@@ -3206,7 +3206,7 @@ Användarna får sina rättigheter bara via gruppen. Inga lösenord eller åtkom
 | Parameter | Typ | Används av |
 |---|---|---|
 | `/novatrix/db/master-losenord` | SecureString | CloudFormation (skapar RDS) och webbservern vid första start |
-| `/novatrix/db/wordpress-losenord` | SecureString | WordPress och backupjobbet |
+| `/novatrix/db/wordpress-losenord` | SecureString | WordPress-installationen (skrivs in i `wp-config.php`) och backupjobbet |
 | `/novatrix/wordpress/admin-losenord` | SecureString | WordPress-installationen (admin-kontot) |
 
 Lösenorden slumpas fram av skriptet (32 tecken) och finns aldrig i koden eller repot.
@@ -3220,7 +3220,7 @@ Lösenorden slumpas fram av skriptet (32 tecken) och finns aldrig i koden eller 
 | 3. Network ACL:er | Stateless brandvägg per subnät. Data-nivån tar bara emot 3306 och 2049 från web-nivån | Trafik som slinker förbi en felkonfigurerad säkerhetsgrupp |
 | 4. Säkerhetsgrupper | Stateful brandvägg per resurs med referenser mellan grupper: db-sg och efs-sg släpper bara in web-sg. Ingen utgående trafik från databas och EFS. Default-gruppen är tömd | Att andra servrar (även bastionen) når databas och lagring |
 | 5. Bastion | Enda SSH-ingången, bara från admin-IP. Ingen IAM-roll, vidarebefordrar bara port 22 | Att servrarna nås via SSH från internet och att bastionen används som tunnel till databasen |
-| 6. Kryptering i transit | TLS till RDS (krävs, certifikatet verifieras), TLS till EFS (krävs av policyn), HTTPS till S3 (krävs av bucket policy) | Avlyssning och manipulation av trafik |
+| 6. Kryptering i transit | TLS till RDS (krävs av databasen), TLS till EFS (krävs av policyn), HTTPS till S3 (krävs av bucket policy) | Avlyssning och manipulation av trafik |
 | 7. Kryptering i vila | RDS, EFS och EC2-diskar krypterade med KMS, S3 med SSE-S3 | Läsning av data om lagringsmediet kommer på avvägar |
 | 8. Databasbehörighet | WordPress egen användare: bara databasen `wordpress`, bara från 10.0.2.0/23. Masteranvändaren används inte i drift | Att ett hackat WordPress når andra databaser eller konton |
 | 9. EFS-behörighet | Filsystemspolicy: bara webbserverrollen, bara via access point. Access pointen tvingar uid 48 (apache) | Att andra roller monterar filerna eller att root på servern blir root på EFS |
