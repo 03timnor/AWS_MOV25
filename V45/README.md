@@ -3042,6 +3042,33 @@ echo "Done."
 
 ## *__2. Dokumentation__*
 
+
+### Köra scripten:
+
+Stå i mappen `V45`:
+
+```bash
+chmod +x V45_*.sh      # första gången
+./V45_novatrix.sh      # bygger hela miljön (15-25 min första gången, RDS tar längst tid)
+```
+
+Vänta 3-5 minuter efter att skriptet är klart, så att *WordPress* hinner installeras. Scriptet skriver ut webbplatsens adress och kommandot för att hämta administratörslösenordet.
+
+```bash
+./V45_verify.sh        # verifierar allt (ca 15 min), sparar V45_verifiering_<datum>.txt
+./V45_cleanup.sh       # raderar hela miljön (bekräfta med JA)
+```
+
+__Logga in i WordPress:__
+
+Gå till `http://<webbserverns-IP>/wp-admin` med användaren `novatrix-admin`. Lösenordet hämtas ur *SSM Parameter Store*:
+
+```bash
+MSYS_NO_PATHCONV=1 aws ssm get-parameter --region eu-north-1 --name /novatrix/wordpress/admin-losenord --with-decryption --query Parameter.Value --output text
+```
+
+`MSYS_NO_PATHCONV=1` behövs bara i *Git Bash*. Den hindrar att `/novatrix/...` görs om till en Windows-sökväg.
+
 ### *__Miljön__*
 
 Allt ligger i region __eu-north-1__ (Stockholm) och har taggen `Projekt=novatrix`. Nätverket, databasen och den delade lagringen definieras som kod i CloudFormation-stacken __`novatrix-natverk`__ (`V45_infra.yaml`). Resten skapas av `V45_novatrix.sh`.
@@ -3249,6 +3276,49 @@ Varje användare, server och roll får endast göra det de behöver. Allt annat 
 | Bastion | Hopp-server för SSH | Vidarebefordra SSH (port 22) till webbservrarna | Har ingen IAM-roll, når varken databas, EFS eller internet |
 | DB-användaren `wordpress` | WordPress-data | Alla rättigheter i databasen `wordpress`, bara från 10.0.2.0/23 | Andra databaser, `mysql.user`, skapa databaser |
 | EFS access point | WordPress-filer | Läsa och skriva som apache (uid 48) i `/wordpress` | Root-åtkomst, andra kataloger, okrypterad anslutning |
+
+### Mappstruktur
+
+```
+AWS_MOV25/
+├── V42/
+│   ├── images/
+│   ├── README.md
+│   └── V42_novatrix-ec2.sh
+├── V43/
+│   ├── pictures/
+│   ├── README.md
+│   ├── V43_cleanup.sh
+│   ├── V43_config.sh
+│   ├── V43_novatrix-iam.sh
+│   └── V43_verify.sh
+├── V44/
+│   ├── pictures/
+│   ├── README.md
+│   ├── V44_cleanup.sh
+│   ├── V44_config.sh
+│   ├── V44_network.yaml
+│   ├── V44_novatrix.sh
+│   └── V44_verify.sh
+├── V45/
+│   ├── pictures/            Skärmbilder till verifieringen
+│   ├── README.md            Dokumentation
+│   ├── V45_cleanup.sh       Raderar hela miljön
+│   ├── V45_config.sh        Gemensamma inställningar
+│   ├── V45_infra.yaml       CloudFormation-mall: nätverk, RDS och EFS
+│   ├── V45_novatrix.sh      Bygger hela miljön
+│   └── V45_verify.sh        Verifierar att allt fungerar
+├── V46/
+│   └── README.md
+├── V47/
+│   └── README.md
+├── V48/
+│   └── README.md
+├── V49_Examination/
+│   └── README.md
+├── .gitignore
+└── README.md
+```
 
 ### *__Motivering__*
 
