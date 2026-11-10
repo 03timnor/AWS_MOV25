@@ -3254,35 +3254,35 @@ Varje användare, server och roll får endast göra det de behöver. Allt annat 
 
 #### __Databasmotor: *MariaDB*__
 
-- *WordPress* är byggt för *MariaDB* och *MySQL* och fungerar utan att man behöver göra anpassningar, till skillnad från om man hade använt *Oracle* eller *SQL Server*. *Aurora* hade kunnat gett automatisk skalning och bättre prestanda. Dock ingår inte *Aurora* i free plan och är lite "overkill" för en liten webbsida.
+- *WordPress* är byggt för *MariaDB* och *MySQL* och fungerar utan att man behöver göra anpassningar, till skillnad från om man hade använt *Oracle* eller *SQL Server*. *Aurora* hade kunnat ge automatisk skalning och bättre prestanda, men kostar mer och är lite "overkill" för en liten webbsida.
 
 #### __Databaslagring: *20 GiB gp2*__
 
-- *20 GiB* är den minsta storleken som ingår i gratisnivån. *WordPress*-databaser är oftast inte större än några hundra megabyte eftersom bilderna lagras i *EFS*. I drift hade valet landat på *gp3*, då det är billigare per gigabyte och ger fast prestanda oberoende av storleken. Provisionerad *IOPS (io1/io2)* behövs endast för stora databaser och kostar betydligt mer.
+- *20 GiB* är både den minsta storleken *RDS* tillåter och det som ingår i gratisnivån. *WordPress*-databaser är oftast inte större än några hundra megabyte eftersom bilderna lagras i *EFS*. I drift hade valet landat på *gp3*. Det kostar lika mycket som *gp2* men ger alltid 3 000 IOPS, medan *gp2* bara ger 100 IOPS i grundnivå vid 20 GiB. Provisionerad *IOPS (io1/io2)* behövs endast för databaser med hög belastning och kostar betydligt mer.
  
 #### __Backup av databasen: 1 dag just nu, 7 - 14 dagar i drift__
 
-- Free plan tillåter endast en dag. I drift hade det optimalt varit 7 - 14 dagar istället eftersom fel ofta upptäcks sent. Till exempel kan ett plugin förstöra  data. Ett intrång kan upptäckas först efter några dagar. Man behöver då kunna gå tillbaka till en tidpunkt innan skadan skedde. 14 dagar är även samma sommför *S3*-backups.
+- Free plan tillåter endast en dag. I drift hade det varit optimalt med 7 - 14 dagar istället eftersom fel ofta upptäcks sent. Till exempel kan ett plugin förstöra data. Ett intrång kan upptäckas först efter några dagar. Man behöver då kunna gå tillbaka till en tidpunkt innan skadan skedde. 14 dagar är även samma som för *S3*-backuperna.
 
 #### __Instansklass: *db.t4g.micro*__
 
-- En lite webbplats har med en ojämn belastning, då passar *Burstable*-instanserna (*t-klassen*) bra. De samlar *CPU*-krediter när det är lugnt och använder dem när det är hög belastning. *Graviton* (*t4g*) är billigare än motsvarande *Intel*-instans (*t3*) samt ingår i free plan. Växer instansen till något större kan klassen ändras till en större utan att något behöver byggas om.
+- En liten webbplats har låg och ojämn belastning, då passar *Burstable*-instanserna (*t-klassen*) bra. De samlar *CPU*-krediter när det är lugnt och använder dem när det är hög belastning. *Graviton* (*t4g*) är billigare än motsvarande *Intel*-instans (*t3*) samt ingår i free plan. Växer webbplatsen kan klassen ändras till en större utan att något behöver byggas om.
 
 #### __*S3 Standard* för backuper__
 
-- *S3*-backups sparas i 14 dagar. Billigare lagringsklasser som *Standard-IA* och *Glacier* har en minsta lagringstid på 30 respektive 14 dagar. Man betalar för hela den tiden även om filen tas bort tidigare. För kortare backuper är därför *Standard* billigast. Om lagringstiden hade vart för månadsbackuper som lagras i ett år hade *Glacier* varit ett bättre val.
+- *S3*-backups sparas i 14 dagar. Billigare lagringsklasser som *Standard-IA* och *Glacier* har en minsta lagringstid på 30 respektive 90 dagar. Man betalar för hela den tiden även om filen tas bort tidigare. För kortlivade backuper är därför *Standard* billigast. Om det hade handlat om månadsbackuper som lagras i ett år hade *Glacier* varit ett bättre val.
 
 ####  __Delad lagring: *EFS*, *Regional*, *Bursting*__
 
-- *EFS* gör det möjligt för flera webbservrar att dela samma *WordPress*-filer. Detta behövs för att kunna växa till 2 servrar i 2 zoner. *Regional* lagring sparar filerna i flera zoner. *One Zone* är billigare men försvinner om zonen går ner. *Bursting* kostar bara för lagrad data. *Elastic* tar betalt för varje gigabyte som läses och skrivs. *WordPress* läser sina filer hela tiden. *Bursting* är därför billigast vid låg trafik.
+- *EFS* gör det möjligt för flera webbservrar att dela samma *WordPress*-filer. Detta behövs för att kunna växa till 2 servrar i 2 zoner. *Regional* lagring sparar filerna i flera zoner. *One Zone* är billigare men filerna kan bli otillgängliga eller gå förlorade om zonen slås ut. *Bursting* kostar bara för lagrad data. *Elastic* tar betalt för varje gigabyte som läses och skrivs. *WordPress* läser sina filer hela tiden. *Bursting* är därför billigast vid låg trafik.
 
 #### __Ingen flytt till *Infrequent Access*__
 
-- *EFS* kan flytta filer som sällan används till en billigare lagringsklass. *WordPress* läser sina *PHP*-filer vid varje sidvisning. Läsningar ifrån *IA* kostar extra och detta hade blivit dyrare, inte billigare.
+- *EFS* kan flytta filer som sällan används till en billigare lagringsklass. *WordPress* läser sina *PHP*-filer vid varje sidvisning. Läsningar från *IA* kostar extra och detta hade blivit dyrare, inte billigare.
 
 #### __*Single-AZ* istället för *Multi-AZ*__
 
-- *Multi-AZ* håller en reservdatabas i en annan zon som automatiskt tar över om något går fel, dock fördubblar detta kostnaden. För en mindre företagswebbplats så räcker det att ha möjlighet att återställa ifrån backup, en kortare avbrottstid kan accepteras. Databasen är i samma zon som webbservern. Det blir då ingen avgift för trafik mellan olika zoner. För en kritisk tjänst hade *Multi-AZ* varit värt kostnaden.
+- *Multi-AZ* håller en reservdatabas i en annan zon som automatiskt tar över om något går fel, dock fördubblar detta kostnaden. För en mindre företagswebbplats så räcker det att ha möjlighet att återställa från backup, en kortare avbrottstid kan accepteras. Databasen är i samma zon som webbservern. Det blir då ingen avgift för trafik mellan olika zoner. För en kritisk tjänst hade *Multi-AZ* varit värt kostnaden.
 
 ## *__3. Verifiering__*
 
