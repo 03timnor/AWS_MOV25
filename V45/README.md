@@ -3093,7 +3093,7 @@ Allt som inte tillåts nekas av den sista regeln (`*  DENY`).
 | Instansklass | db.t4g.micro (Graviton) | Minsta klassen, ingår i Free tier / Free plan och räcker för en mindre WordPress-sajt |
 | Lagring | 20 GiB gp2 | Free tier-gränsen och minsta möjliga storlek |
 | Kryptering i vila | Ja (`aws/rds`) | Gratis med AWS-hanterad nyckel |
-| Kryptering i transit | TLS krävs (`require_secure_transport=ON`), servercertifikatet verifieras | Trafiken mellan webbserver och databas kan inte avlyssnas |
+| Kryptering i transit | TLS krävs (`require_secure_transport=ON`). Databasklienten verifierar servercertifikatet | Trafiken mellan webbserver och databas kan inte avlyssnas |
 | Placering | Single-AZ, eu-north-1a | Samma AZ som webbservern: ingen avgift för trafik mellan AZ. Multi-AZ fördubblar kostnaden |
 | Subnätgrupp | `novatrix-db-subnets` (data-a, data-b) | Bara privata subnät |
 | Publikt åtkomlig | Nej | Ingen publik IP och ingen route till internet |
