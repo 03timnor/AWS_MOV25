@@ -2,7 +2,7 @@
 
 Repository: https://github.com/03timnor/AWS_MOV25
 
-*Tim Noreliusson Lingestedt, 2026-11-05*
+*Tim Noreliusson Lingestedt, 2026-11-10*
 
 Veckans uppgift innefattar att börja med *WordPress*-stacken. *WordPress* behöver en databas och lagring som kopplas ihop med webbservern för att fungera.
 
