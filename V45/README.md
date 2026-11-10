@@ -4,7 +4,7 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-11-05*
 
-Veckans uppgift innefattar att börja med *WordPress*-stacken. *WordPress* behöver en databas och lagring aom kopplas ihop med webbservern för att fungera.
+Veckans uppgift innefattar att börja med *WordPress*-stacken. *WordPress* behöver en databas och lagring som kopplas ihop med webbservern för att fungera.
 
 Väl Godkänt delen av uppgiften går ut på att göra motiverade val av databas och lagringsnivåer, säkra åtkomsten och att miljön skall skapas med kod.
 
@@ -3056,7 +3056,7 @@ Allt ligger i region **eu-north-1** (Stockholm) och har taggen `Projekt=novatrix
 | Subnät | `web-a` | 10.0.2.0/24, eu-north-1a, publikt | Webbserver med WordPress |
 | Subnät | `web-b` | 10.0.3.0/24, eu-north-1b, publikt | Reserverat för en andra webbserver |
 | Subnät | `data-a` | 10.0.10.0/24, eu-north-1a, privat | RDS och EFS mount target |
-| Subnät | `data-b` | 10.0.11.0/24, eu-north-1b, privat | EFS mount target (RDS kräver två AZ i subnät-gruppen) |
+| Subnät | `data-b` | 10.0.11.0/24, eu-north-1b, privat | EFS mount target (RDS kräver två AZ i subnätgruppen) |
 | Route table | `novatrix-rt-publik` | local, 0.0.0.0/0 → IGW, S3 → endpoint | För mgmt-a, web-a och web-b |
 | Route table | `novatrix-rt-privat` | Endast local | För data-a och data-b: ingen väg till eller från internet |
 | VPC-endpoint | S3 (gateway) | Släpper bara igenom Novatrix-bucketen och Amazon Linux paketförråd | S3-trafik stannar i AWS nät |
@@ -3095,13 +3095,13 @@ Allt som inte tillåts nekas av den sista regeln (`*  DENY`).
 | Kryptering i vila | Ja (`aws/rds`) | Gratis med AWS-hanterad nyckel |
 | Kryptering i transit | TLS krävs (`require_secure_transport=ON`), servercertifikatet verifieras | Trafiken mellan webbserver och databas kan inte avlyssnas |
 | Placering | Single-AZ, eu-north-1a | Samma AZ som webbservern: ingen avgift för trafik mellan AZ. Multi-AZ fördubblar kostnaden |
-| Subnät-grupp | `novatrix-db-subnets` (data-a, data-b) | Bara privata subnät |
+| Subnätgrupp | `novatrix-db-subnets` (data-a, data-b) | Bara privata subnät |
 | Publikt åtkomlig | Nej | Ingen publik IP och ingen route till internet |
 | Säkerhetsgrupp | `novatrix-db-sg` | Bara webbservern når port 3306 |
 | Automatisk backup | 1 dag, fönster 01:00–01:30 UTC | Free plan tillåter högst 1 dag (se Backup) |
 | Underhållsfönster | Söndag 02:00–02:30 UTC | Lågtrafik |
 | Databas | `wordpress` | |
-| Användare | `novatrixadmin` (master) och `wordpress` | WordPress använder `wordpress`, som bara har rättigheter i databasen `wordpress` och bara får logga in från 10.0.2.0/23. Masteranvändaren används bara en gång, för att skapa `wordpress` |
+| Användare | `novatrixadmin` (master) och `wordpress` | WordPress använder `wordpress`, som bara har rättigheter i databasen `wordpress` och bara får logga in från 10.0.2.0/23. Masteranvändaren används bara när en webbserver startar första gången, för att skapa `wordpress` |
 
 ### *__Delad lagring (EFS)__*
 
@@ -3115,7 +3115,7 @@ Allt som inte tillåts nekas av den sista regeln (`*  DENY`).
 | Mount targets | data-a och data-b, `novatrix-efs-sg` | Bara privata subnät, bara webbservern når port 2049 |
 | Access point | `novatrix-wordpress-ap`: `/wordpress`, uid/gid 48 (apache), 0755 | Alla klienter skriver som apache, inte ens root på servern blir root på EFS |
 | Filsystemspolicy | Nekar okrypterad trafik. Tillåter bara `novatrix-web-ec2-role` och bara via en access point | |
-| Lifecycle (IA/Archive) | Av | WordPress läser sina filer hela tiden: IA tar betalt per läsning |
+| Lifecycle (IA/Archive) | Av | WordPress läser sina filer hela tiden: IA tar betalt per läst GB |
 | AWS Backup | Av | Kostar extra. `wp-content` säkerhetskopieras till S3 dagligen |
 | Monteras på | `/var/www/html` på webbservern | Hela WordPress-installationen |
 
@@ -3132,7 +3132,7 @@ Allt som inte tillåts nekas av den sista regeln (`*  DENY`).
 | Metadata | Bara IMDSv2, hop-gräns 1 | Bara IMDSv2, hop-gräns 1 |
 | CPU-krediter | Standard (inga extra kostnader) | Standard |
 | SSH | Bara från bastionen, inga lösenord, ingen root, ingen tunnling | Bara från admin-IP, inga lösenord, ingen root, vidarebefordrar bara port 22 |
-| Programvara | Apache (HTTP och HTTPS med självsignerat certifikat), PHP 8.5-FPM, WordPress 7.1 (sv_SE), WP-CLI, MariaDB-klient, amazon-efs-utils | Ingen extra |
+| Programvara | Apache (HTTP och HTTPS med självsignerat certifikat), PHP 8.5-FPM, WordPress 7.1 (sv_SE), WP-CLI, MariaDB-klient, amazon-efs-utils | Ingen extra programvara |
 
 ### *__Webbserverns tjänster__*
 
@@ -3235,7 +3235,7 @@ Lösenorden slumpas fram av skriptet (32 tecken) och finns aldrig i koden eller 
 
 ### Least privilege
 
-Varje användare, server och roll får endast göra det som de behöver. Allt annat är spärrat. Kan man inte motivera en behörighet så skall man inte ha den.
+Varje användare, server och roll får endast göra det de behöver. Allt annat är spärrat. Kan man inte motivera en behörighet så skall man inte ha den.
 
 | Vem | Uppgift | Får | Får inte |
 |---|---|---|---|
