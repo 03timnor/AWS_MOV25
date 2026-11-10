@@ -3247,8 +3247,8 @@ Varje användare, server och roll får endast göra det de behöver. Allt annat 
 | `novatrix-publicerare-role` (Lambda) | Publicera utkast | Läsa `utkast/`, skriva `web/`, skriva sin egen logg | Radera filer, läsa backuper, skriva utkast (kan inte trigga sig själv) |
 | `novatrix-flodeslogg-role` | Skriva flödesloggar | Skriva till flödesloggarnas logggrupp, bara för detta konto | Allt annat |
 | Bastion | Hopp-server för SSH | Vidarebefordra SSH (port 22) till webbservrarna | Har ingen IAM-roll, når varken databas, EFS eller internet |
-| DB-användaren `wordpress` | WordPress data | Alla rättigheter i databasen `wordpress`, bara från 10.0.2.0/23 | Andra databaser, `mysql.user`, skapa databaser |
-| EFS access point | WordPress filer | Läsa och skriva som apache (uid 48) i `/wordpress` | Root-åtkomst, andra kataloger, okrypterad anslutning |
+| DB-användaren `wordpress` | WordPress-data | Alla rättigheter i databasen `wordpress`, bara från 10.0.2.0/23 | Andra databaser, `mysql.user`, skapa databaser |
+| EFS access point | WordPress-filer | Läsa och skriva som apache (uid 48) i `/wordpress` | Root-åtkomst, andra kataloger, okrypterad anslutning |
 
 ### *__Motivering__*
 
