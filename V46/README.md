@@ -3370,8 +3370,6 @@ echo "Done. Recreate everything from the repo with: ./V46_novatrix.sh"
 
 ### *__Hur scripten / mallarna körs__*
 
-__OBS!__ Man måste stå i rätt mapp och ha korrekt mappstruktur.
-
 #### *__Skapa infrastrukturen / miljön:__*
 
 ```bash
