@@ -3587,26 +3587,26 @@ Commit-meddelanden kan beskriva varför en ändring gjordes.
 
 ### *__Stackar skapade:__*
 
-![alt text](stacks_1.png)
+![alt text](pictures/stacks_1.png)
 
-![alt text](stacks_2.png)
+![alt text](pictures/stacks_2.png)
 
 ### *__Webbsidan fungerar:__*
 
-![alt text](website.png)
+![alt text](pictures/website.png)
 
 ### *__Templates (yaml):__*
 
-![alt text](templates.png)
+![alt text](pictures/templates.png)
 
 ### *__SSH fungerar:__*
 
-![alt text](ssh.png)
+![alt text](pictures/ssh.png)
 
 ### *__Versionshistorik:__*
 
-![alt text](version_history.png)
+![alt text](pictures/version_history.png)
 
 ### *__Verifiering OK:__*
 
-![alt text](verified.png)
+![alt text](pictures/verified.png)
