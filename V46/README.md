@@ -3603,6 +3603,8 @@ Commit-meddelanden kan beskriva varför en ändring gjordes.
 
 ![alt text](pictures/version_history.png)
 
+![alt text](version_history_2.png)
+
 ### *__Verifiering OK:__*
 
 ![alt text](pictures/verified.png)
