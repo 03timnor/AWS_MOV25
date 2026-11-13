@@ -3,11 +3,11 @@
 # Novatrix V46 - the WHOLE stack from code: deploys the five CloudFormation
 # templates in templates/ in order. Nothing is clicked in the console.
 #
-#   templates/01-network.yaml   VPC, subnets, routes, S3 endpoint, SG, NACL, flow logs
-#   templates/02-data.yaml      RDS MariaDB + EFS (+ access point, mount targets)
-#   templates/03-security.yaml  IAM: service roles, instance profile, groups, policies, users
-#   templates/04-storage.yaml   S3 bucket (policy, lifecycle, trigger) + publisher Lambda
-#   templates/05-compute.yaml   launch templates, web server (WordPress), bastion
+#   templates/V46_01-network.yaml   VPC, subnets, routes, S3 endpoint, SG, NACL, flow logs
+#   templates/V46_02-data.yaml      RDS MariaDB + EFS (+ access point, mount targets)
+#   templates/V46_03-security.yaml  IAM: service roles, instance profile, groups, policies, users
+#   templates/V46_04-storage.yaml   S3 bucket (policy, lifecycle, trigger) + publisher Lambda
+#   templates/V46_05-compute.yaml   launch templates, web server (WordPress), bastion
 #
 # Each layer exports its ids (<namn>-<Key>) and the next layer imports them.
 # Everything that varies (IP, names, sizes, CIDRs) is a parameter, set in

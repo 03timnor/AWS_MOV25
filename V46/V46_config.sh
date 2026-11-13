@@ -35,11 +35,11 @@ STACK_SECURITY="${PROJECT}-security"          # IAM: service roles, groups, poli
 STACK_STORAGE="${PROJECT}-storage"            # S3 bucket + publisher Lambda
 STACK_COMPUTE="${PROJECT}-compute"            # launch template, web server, bastion
 STACKS=("$STACK_NETWORK" "$STACK_DATA" "$STACK_SECURITY" "$STACK_STORAGE" "$STACK_COMPUTE")
-TEMPLATES=(templates/01-network.yaml templates/02-data.yaml templates/03-security.yaml
-           templates/04-storage.yaml templates/05-compute.yaml)
+TEMPLATES=(templates/V46_01-network.yaml templates/V46_02-data.yaml templates/V46_03-security.yaml
+           templates/V46_04-storage.yaml templates/V46_05-compute.yaml)
 CONTENT_DIR="content"                      # static content, uploaded as drafts to drafts/
 
-# ----- Network (address plan, see templates/01-network.yaml) -----------------------
+# ----- Network (address plan, see templates/V46_01-network.yaml) -----------------------
 VPC_CIDR="10.0.0.0/16"
 MGMT_A_CIDR="10.0.0.0/24"                  # bastion
 WEB_A_CIDR="10.0.2.0/24"                   # web server
@@ -89,7 +89,7 @@ LOG_GROUP="/aws/lambda/${FUNCTION_NAME}"
 LOG_RETENTION_DAYS=30                      # logs/ objects are deleted after this many days
 BACKUP_RETENTION_DAYS=14                   # backup/ objects are deleted after this many days
 
-# ----- Service roles (machines) - names are set in templates/03-security.yaml ---
+# ----- Service roles (machines) - names are set in templates/V46_03-security.yaml ---
 EC2_ROLE="${PROJECT}-web-ec2-role"
 EC2_PROFILE="${PROJECT}-web-ec2-profile"
 UPLOADER_ROLE="${PROJECT}-uploader-role"    # may ONLY be assumed by the EC2 role (role chaining)
