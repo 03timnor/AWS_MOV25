@@ -4,13 +4,13 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-11-13*
 
-Veckans uppgift är bygga det som gjorts de tidigare veckorna med *CloudFormation* mallar (kod), versionhanterat i *GitHub*. infrastrukturen / miljön skall kunna återskapas utan manuellt klickande.
+Veckans uppgift är att bygga det som gjorts de tidigare veckorna med *CloudFormation* mallar (kod), versionshanterat i *GitHub*. Infrastrukturen / miljön skall kunna återskapas utan manuellt klickande.
 
 För Väl Godkänt hela infrastrukturen / miljön kunna skapas med kod och kunna återskapas från kod.
 
 ## *__1. Skapa infrastrukturen / miljön med CloudFormation mallar (Kod)__*
 
-infrastrukturen / miljön skapas med följande kod:
+Infrastrukturen / miljön skapas med följande kod:
 
 ### *__V46_01-network.yaml__*
 
@@ -3388,7 +3388,7 @@ chmod +x *.sh
 ./V46_verify.sh
 ```
 
-#### *__Ta bort hela intfrastrukturen / miljön:__*
+#### *__Ta bort hela infrastrukturen / miljön:__*
 
 ```bash
 ./V46_cleanup.sh
@@ -3551,9 +3551,9 @@ AWS_MOV25/
 
 Klona repository till ens dator om det inte redan finns. Kör `./V46_novatrix.sh`. Infrastrukturen / miljön återskapas helt från koden. Data återskapas inte, behövs det behöver man återställa det ifrån backup.
 
-### *__Hur versionshantering hjälper drift och sammarbete__*
+### *__Hur versionshantering hjälper drift och samarbete__*
 
-#### *__Drfit:__*
+#### *__Drift:__*
 
 - __Spårbarhet__
 
@@ -3567,7 +3567,7 @@ En felaktig ändring kan backas då man har tillgång till de tidigare versioner
 
 Infrastrukturen / miljön kan återskapas ifrån repository med ett kommando.
 
-#### *__Sammarbete:__*
+#### *__Samarbete:__*
 
 - *__En källa / gemensam yta__*
 
@@ -3575,7 +3575,7 @@ Alla ändrar i samma kod, inte var för sig. Man kan se varandras ändringar enk
 
 - __Spårbarhet__
 
-Man kan se vem som ändrade något, varför och när det skedde. Vilket är bra även för sammarbete.
+Man kan se vem som ändrade något, varför och när det skedde. Vilket är bra även för samarbete.
 
 - *__Dokumentation__*
 
