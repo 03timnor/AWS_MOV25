@@ -4,15 +4,15 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-11-13*
 
-Veckans uppgift är bygga det som gjorts de tidigare veckorna med *CloudFormation* mallar (kod), versionhanterat i *GitHub*. Miljön skall kunna återskapas utan manuellt klickande.
+Veckans uppgift är bygga det som gjorts de tidigare veckorna med *CloudFormation* mallar (kod), versionhanterat i *GitHub*. infrastrukturen / miljön skall kunna återskapas utan manuellt klickande.
 
-För Väl Godkänt hela miljön kunna skapas med kod och kunna återskapas från kod.
+För Väl Godkänt hela infrastrukturen / miljön kunna skapas med kod och kunna återskapas från kod.
 
-## *__1. Skapa miljön med CloudFormation mallar (Kod)__*
+## *__1. Skapa infrastrukturen / miljön med CloudFormation mallar (Kod)__*
 
-Miljön skapas med följande kod:
+infrastrukturen / miljön skapas med följande kod:
 
-*__V46_01-network.yaml__*
+### *__V46_01-network.yaml__*
 
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
@@ -673,7 +673,7 @@ Outputs:
     Export: { Name: !Sub "${ProjectName}-FlowLogGroupName" }
 ```
 
-*__V46_02-data.yaml__*
+### *__V46_02-data.yaml__*
 
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
@@ -880,7 +880,7 @@ Outputs:
     Value: !Ref EfsMountTargetA
 ```
 
-*__V46_03-security.yaml__*
+### *__V46_03-security.yaml__*
 
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
@@ -1213,7 +1213,7 @@ Outputs:
     Export: { Name: !Sub "${ProjectName}-LambdaRoleArn" }
 ```
 
-*__V46_04-storage.yaml__*
+### *__V46_04-storage.yaml__*
 
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
@@ -1428,7 +1428,7 @@ Outputs:
     Value: !Ref PublisherLogGroup
 ```
 
-*__V46_05-compute.yaml__*
+### *__V46_05-compute.yaml__*
 
 ```yaml
 AWSTemplateFormatVersion: "2010-09-09"
@@ -1956,7 +1956,7 @@ Outputs:
   BastionPrivateIp:   { Value: !GetAtt Bastion.PrivateIp }
 ```
 
-*__V46_novatrix.sh__*
+### *__V46_novatrix.sh__*
 
 ```bash
 #!/usr/bin/env bash
@@ -2292,7 +2292,7 @@ echo "Next:     ./V46_verify.sh     (stacks vs repo, drift, permissions, WordPre
 echo "Clean up: ./V46_cleanup.sh"
 ```
 
-*__V46_config.sh__*
+### *__V46_config.sh__*
 
 ```bash
 # =============================================================================
@@ -2450,7 +2450,7 @@ WORK_DIR=".v46_build"
 mkdir -p "$WORK_DIR"
 ```
 
-*__V46_verify.sh__*
+### *__V46_verify.sh__*
 
 ```bash
 #!/usr/bin/env bash
@@ -3284,7 +3284,7 @@ echo "Sparat i $OUT"
 [[ $FAIL -eq 0 ]]
 ```
 
-*__V46_cleanup.sh__*
+### *__V46_cleanup.sh__*
 
 ```bash
 #!/usr/bin/env bash
@@ -3368,4 +3368,245 @@ echo "Done. Recreate everything from the repo with: ./V46_novatrix.sh"
 
 ## *__2. Dokumentation__*
 
+### *__Hur scripten / mallarna körs__*
+
+__OBS!__ Man måste stå i rätt mapp och ha korrekt mappstruktur.
+
+#### *__Skapa infrastrukturen / miljön:__*
+
+```bash
+chmod +x *.sh
+```
+
+```bash
+./V46_novatrix.sh
+```
+
+#### *__Verifiera funktionalitet:__*
+
+```bash
+./V46_verify.sh
+```
+
+#### *__Ta bort hela intfrastrukturen / miljön:__*
+
+```bash
+./V46_cleanup.sh
+```
+
+### *__Stackar__*
+ 
+| # | Stack | Mall | Innehåll | Importerar från |
+|---|---|---|---|---|
+| 1 | `novatrix-network` | `templates/V46_01-network.yaml` | VPC, subnät, route tables, internet gateway, S3 gateway endpoint, security groups, NACL:er, VPC flow logs | – |
+| 2 | `novatrix-data` | `templates/V46_02-data.yaml` | RDS MariaDB, EFS (access point, mount targets), DB subnet group | 1 |
+| 3 | `novatrix-security` | `templates/V46_03-security.yaml` | IAM-roller, instance profile, grupper, policyer, användare | 1, 2 |
+| 4 | `novatrix-storage` | `templates/V46_04-storage.yaml` | S3-bucket (policy, livscykel, trigger), publicerar-Lambda, logggrupp | 1, 3 |
+| 5 | `novatrix-compute` | `templates/V46_05-compute.yaml` | Launch templates, webbserver (WordPress), bastion | 1, 2, 3, 4 |
+ 
+Utanför mallarna (avsiktligt): lösenorden i SSM Parameter Store och tömningen av VPC:ns default security group. Båda sköts av `V46_novatrix.sh`.
+ 
+### *__Script__*
+ 
+| Script | Körs | Gör |
+|---|---|---|
+| `V46_config.sh` | Körs inte själv, läses in av de andra | Alla värden som varierar (region, namn, CIDR, storlekar, nyckelpar) och hjälpfunktioner för stackarnas outputs |
+| `V46_novatrix.sh` | `./V46_novatrix.sh` | Validerar mallarna, kontrollerar att inget från V45 är i vägen, skapar lösenorden i SSM, deployar de fem stackarna i ordning och laddar upp `content/` |
+| | `./V46_novatrix.sh --plan` | Visar vad som skulle ändras (change sets) utan att ändra något |
+| | `NEW_AMI=1 ./V46_novatrix.sh` | Uppdaterar servrarna till senaste Amazon Linux (de ersätts) |
+| `V46_verify.sh` | `./V46_verify.sh` | Del 0: stackar, repo = AWS, drift och ägarskap. Del 1: IAM. Del 2: webbplatsen. Del 3: S3 och role chaining. Del 4: RDS och EFS. Del 5: backup. Del 6: nätverket. Sparar resultatet i `V46_verifiering_<datum>.txt` |
+| `V46_cleanup.sh` | `./V46_cleanup.sh` | Tömmer bucketen, raderar stackarna i omvänd ordning och tar bort lösenorden i SSM |
+ 
+### *__Script på webbservern__*
+ 
+Skapas av användardatan i `V46_05-compute.yaml` och körs av systemd.
+ 
+| Script | Körs | Gör |
+|---|---|---|
+| `novatrix-sync` | Var 30:e minut | Hämtar `web/` från S3 till `/var/www/static` |
+| `novatrix-logs` | Dagligen | Arkiverar Apache-loggarna till `logs/` via uppladdarrollen |
+| `novatrix-backup` | Dagligen 00:00 UTC | Databasdump + wp-content till `backup/` via uppladdarrollen |
+| `novatrix-wpcron` | Var 5:e minut | WordPress schemalagda uppgifter |
+| `novatrix-db` | Manuellt | MariaDB-klient mot RDS med TLS, lösenordet hämtas från SSM |
+| `as-uploader` | Används av de andra | Byter till uppladdarrollen (role chaining) och kör ett kommando |
+| `s3-curl` | Manuellt / verify | Läser S3 med bara curl och instansrollen |
+ 
+### *__Nätverk (`10.0.0.0/16`, eu-north-1)__*
+ 
+| Subnät | CIDR | AZ | Typ | Innehåll |
+|---|---|---|---|---|
+| `mgmt-a` | `10.0.0.0/24` | a | Publikt | Bastion (enda SSH-ingången) |
+| `web-a` | `10.0.2.0/24` | a | Publikt | Webbserver (Apache + WordPress) |
+| `web-b` | `10.0.3.0/24` | b | Publikt | Reserverat (andra webbserver / lastbalanserare) |
+| `data-a` | `10.0.10.0/24` | a | Privat | RDS, EFS mount target |
+| `data-b` | `10.0.11.0/24` | b | Privat | EFS mount target |
+ 
+Privata subnät har bara lokal route: ingen internet gateway, ingen NAT.
+ 
+### *__Resurser__*
+ 
+| Resurs | Namn | Konfiguration |
+|---|---|---|
+| Webbserver | `novatrix-web` | t3.micro, Amazon Linux 2023, IMDSv2, krypterad gp3, publik IP |
+| Bastion | `novatrix-bastion` | t3.micro, ingen IAM-roll, SSH vidare bara till port 22 |
+| Databas | `novatrix-db` | RDS MariaDB, db.t4g.micro, 20 GiB gp2, Single-AZ, krypterad, inte publik, TLS krävs, backup 1 dag |
+| Delad lagring | `novatrix-wordpress-efs` | EFS, krypterad, bursting, åtkomst bara via access point (uid/gid 48) och TLS |
+| Bucket | `novatrix-web-<konto-id>` | Privat, SSE-S3, endast TLS, instansroller bara via VPC-endpoint |
+| Lambda | `novatrix-publisher` | Python 3.12, publicerar godkända filer från `drafts/` till `web/` |
+| Flödesloggar | `/novatrix/vpc-flow-logs` | Alla accepterade och blockerade anslutningar, sparas 7 dagar |
+| Hemligheter | `/novatrix/db/master-password`, `/novatrix/db/wordpress-password`, `/novatrix/wordpress/admin-password` | SSM SecureString |
+ 
+### *__S3-prefix__*
+ 
+| Prefix | Innehåll | Skrivs av | Läses av | Raderas efter |
+|---|---|---|---|---|
+| `drafts/` | Utkast (triggar Lambdan) | Utveckling, marknad (`drafts/images/`) | Lambdan | – |
+| `web/` | Publicerat statiskt innehåll | Lambdan | Webbservern | – |
+| `logs/` | Apache-loggar | Uppladdarrollen | Drift | 30 dagar |
+| `backup/` | Databasdump + wp-content | Uppladdarrollen | Drift | 14 dagar |
+ 
+### *__Security groups__*
+ 
+| SG | In | Ut |
+|---|---|---|
+| `novatrix-bastion-sg` | 22 från din IP | 22 till `web-sg` |
+| `novatrix-web-sg` | 80, 443 från internet, 22 från `bastion-sg` | 443 till internet, 3306 till `db-sg`, 2049 till `efs-sg` |
+| `novatrix-db-sg` | 3306 från `web-sg` | Ingenting |
+| `novatrix-efs-sg` | 2049 från `web-sg` | Ingenting |
+ 
+NACL:er per nivå (mgmt, web, data) upprepar samma regler som ett andra, oberoende lager.
+ 
+### *__IAM__*
+ 
+| Roll / grupp | Används av | Får |
+|---|---|---|
+| `novatrix-web-ec2-role` | Webbservern | Läsa `web/`, läsa de tre hemligheterna, montera EFS via access point, anta uppladdarrollen |
+| `novatrix-uploader-role` | Bara webbserverns roll (role chaining) | Bara skriva till `logs/` och `backup/` |
+| `novatrix-publisher-role` | Lambdan | Läsa `drafts/`, skriva `web/`, skriva till sin egen logggrupp |
+| `novatrix-flow-log-role` | VPC flow logs | Skriva till flödesloggruppen |
+| `novatrix-operations` (`anna.ops`) | Drift | Se allt, starta/stoppa projektets instanser, läsa loggar och backuper |
+| `novatrix-development` (`erik.dev`) | Utveckling | Hantera utkast, läsa `web/`, driftsätta Lambdakod |
+| `novatrix-marketing` (`maja.marketing`) | Marknad | Ladda upp bilder till `drafts/images/` |
+
+### *__Mappstruktur__*
+
+```
+AWS_MOV25/
+├── V42/
+│   ├── images/
+│   ├── README.md
+│   └── V42_novatrix-ec2.sh
+├── V43/
+│   ├── pictures/
+│   ├── README.md
+│   ├── V43_cleanup.sh
+│   ├── V43_config.sh
+│   ├── V43_novatrix-iam.sh
+│   └── V43_verify.sh
+├── V44/
+│   ├── pictures/
+│   ├── README.md
+│   ├── V44_cleanup.sh
+│   ├── V44_config.sh
+│   ├── V44_network.yaml
+│   ├── V44_novatrix.sh
+│   └── V44_verify.sh
+├── V45/
+│   ├── pictures/
+│   ├── README.md
+│   ├── V45_cleanup.sh
+│   ├── V45_config.sh
+│   ├── V45_infra.yaml
+│   ├── V45_novatrix.sh
+│   └── V45_verify.sh
+├── V46/                            # The whole stack as code (CloudFormation)
+│   ├── content/                    # Static content: S3 drafts/ -> Lambda -> web/ -> web server
+│   │   ├── images/
+│   │   │   └── crane.svg
+│   │   ├── index.html
+│   │   └── style.css
+│   ├── pictures/                   # Screenshots for the README
+│   ├── templates/                  # CloudFormation templates, deployed in this order
+│   │   ├── V46_01-network.yaml     # VPC, subnets, routes, S3 endpoint, SG, NACL, flow logs
+│   │   ├── V46_02-data.yaml        # RDS MariaDB + EFS
+│   │   ├── V46_03-security.yaml    # IAM roles, groups, policies, users
+│   │   ├── V46_04-storage.yaml     # S3 bucket + publisher Lambda
+│   │   └── V46_05-compute.yaml     # Launch templates, web server, bastion
+│   ├── README.md
+│   ├── V46_cleanup.sh              # Deletes all stacks and secrets
+│   ├── V46_config.sh               # All values that vary (sourced by the other scripts)
+│   ├── V46_novatrix.sh             # Deploys the whole stack (--plan = preview)
+│   └── V46_verify.sh               # Verifies stacks, drift, IAM, WordPress, backups, network
+├── V47/
+│   └── README.md
+├── V48/
+│   └── README.md
+├── V49_Examination/
+│   └── README.md
+├── .gitignore
+└── README.md
+```
+
+### *__Hur infrastrukturen / miljön återskapas från repository__*
+
+Klona repository till ens dator om det inte redan finns. Kör `./V46_novatrix.sh`. Infrastrukturen / miljön återskapas helt från koden. Data återskapas inte, behövs det behöver man återställa det ifrån backup.
+
+### *__Hur versionshantering hjälper drift och sammarbete__*
+
+#### *__Drfit:__*
+
+- __Spårbarhet__
+
+Man kan se vem som ändrade något, varför och när det skedde.
+
+- __Återställning__
+
+En felaktig ändring kan backas då man har tillgång till de tidigare versionerna.
+
+- __Återskapa__
+
+Infrastrukturen / miljön kan återskapas ifrån repository med ett kommando.
+
+#### *__Sammarbete:__*
+
+- *__En källa / gemensam yta__*
+
+Alla ändrar i samma kod, inte var för sig. Man kan se varandras ändringar enklare.
+
+- __Spårbarhet__
+
+Man kan se vem som ändrade något, varför och när det skedde. Vilket är bra även för sammarbete.
+
+- *__Dokumentation__*
+
+Commit-meddelanden kan beskriva varför en ändring gjordes.
+
+- *__Mindre konflikter__*
+
 ## *__3. Verifiering__*
+
+### *__Stackar skapade:__*
+
+![alt text](stacks_1.png)
+
+![alt text](stacks_2.png)
+
+### *__Webbsidan fungerar:__*
+
+![alt text](website.png)
+
+### *__Templates (yaml):__*
+
+![alt text](templates.png)
+
+### *__SSH fungerar:__*
+
+![alt text](ssh.png)
+
+### *__Versionshistorik:__*
+
+![alt text](version_history.png)
+
+### *__Verifiering OK:__*
+
+![alt text](verified.png)
