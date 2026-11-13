@@ -1,4 +1,4 @@
-# __IAC med CloudFormation__
+# __IaC med CloudFormation__
 
 Repository: https://github.com/03timnor/AWS_MOV25
 
@@ -3419,15 +3419,15 @@ Utanför mallarna (avsiktligt): lösenorden i SSM Parameter Store och tömningen
  
 ### *__Script på webbservern__*
  
-Skapas av användardatan i `V46_05-compute.yaml` och körs av systemd.
- 
+Skapas av användardatan i `V46_05-compute.yaml`. Schemalagda jobb körs av systemd-timers, övriga körs manuellt eller av jobben.
+
 | Script | Körs | Gör |
 |---|---|---|
 | `novatrix-sync` | Var 30:e minut | Hämtar `web/` från S3 till `/var/www/static` |
 | `novatrix-logs` | Dagligen | Arkiverar Apache-loggarna till `logs/` via uppladdarrollen |
 | `novatrix-backup` | Dagligen 00:00 UTC | Databasdump + wp-content till `backup/` via uppladdarrollen |
 | `novatrix-wpcron` | Var 5:e minut | WordPress schemalagda uppgifter |
-| `novatrix-db` | Manuellt | MariaDB-klient mot RDS med TLS, lösenordet hämtas från SSM |
+| `novatrix-db` | Manuellt / backup | MariaDB-klient mot RDS med TLS, lösenordet hämtas från SSM |
 | `as-uploader` | Används av de andra | Byter till uppladdarrollen (role chaining) och kör ett kommando |
 | `s3-curl` | Manuellt / verify | Läser S3 med bara curl och instansrollen |
  
@@ -3449,7 +3449,7 @@ Privata subnät har bara lokal route: ingen internet gateway, ingen NAT.
 |---|---|---|
 | Webbserver | `novatrix-web` | t3.micro, Amazon Linux 2023, IMDSv2, krypterad gp3, publik IP |
 | Bastion | `novatrix-bastion` | t3.micro, ingen IAM-roll, SSH vidare bara till port 22 |
-| Databas | `novatrix-db` | RDS MariaDB, db.t4g.micro, 20 GiB gp2, Single-AZ, krypterad, inte publik, TLS krävs, backup 1 dag |
+| Databas | `novatrix-db` | RDS MariaDB, db.t4g.micro, 20 GiB gp2, Single-AZ, krypterad, inte publik, anslutning med TLS (certifikatet verifieras), backup 1 dag |
 | Delad lagring | `novatrix-wordpress-efs` | EFS, krypterad, bursting, åtkomst bara via access point (uid/gid 48) och TLS |
 | Bucket | `novatrix-web-<konto-id>` | Privat, SSE-S3, endast TLS, instansroller bara via VPC-endpoint |
 | Lambda | `novatrix-publisher` | Python 3.12, publicerar godkända filer från `drafts/` till `web/` |
@@ -3470,7 +3470,7 @@ Privata subnät har bara lokal route: ingen internet gateway, ingen NAT.
 | SG | In | Ut |
 |---|---|---|
 | `novatrix-bastion-sg` | 22 från din IP | 22 till `web-sg` |
-| `novatrix-web-sg` | 80, 443 från internet, 22 från `bastion-sg` | 443 till internet, 3306 till `db-sg`, 2049 till `efs-sg` |
+| `novatrix-web-sg` | 80, 443 från internet, 22 från `bastion-sg`, ICMP typ 3 kod 4 (Path MTU Discovery) | 443 till internet, 3306 till `db-sg`, 2049 till `efs-sg` |
 | `novatrix-db-sg` | 3306 från `web-sg` | Ingenting |
 | `novatrix-efs-sg` | 2049 från `web-sg` | Ingenting |
  
@@ -3484,7 +3484,7 @@ NACL:er per nivå (mgmt, web, data) upprepar samma regler som ett andra, oberoen
 | `novatrix-uploader-role` | Bara webbserverns roll (role chaining) | Bara skriva till `logs/` och `backup/` |
 | `novatrix-publisher-role` | Lambdan | Läsa `drafts/`, skriva `web/`, skriva till sin egen logggrupp |
 | `novatrix-flow-log-role` | VPC flow logs | Skriva till flödesloggruppen |
-| `novatrix-operations` (`anna.ops`) | Drift | Se allt, starta/stoppa projektets instanser, läsa loggar och backuper |
+| `novatrix-operations` (`anna.ops`) | Drift | Se status för servrar, nätverk, databas, EFS och stackar, starta/stoppa projektets instanser, läsa loggar och backuper |
 | `novatrix-development` (`erik.dev`) | Utveckling | Hantera utkast, läsa `web/`, driftsätta Lambdakod |
 | `novatrix-marketing` (`maja.marketing`) | Marknad | Ladda upp bilder till `drafts/images/` |
 
@@ -3580,8 +3580,6 @@ Man kan se vem som ändrade något, varför och när det skedde. Vilket är bra 
 - *__Dokumentation__*
 
 Commit-meddelanden kan beskriva varför en ändring gjordes.
-
-- *__Mindre konflikter__*
 
 ## *__3. Verifiering__*
 
