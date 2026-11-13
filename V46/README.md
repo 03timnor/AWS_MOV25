@@ -3472,7 +3472,7 @@ Privata subnät har bara lokal route: ingen internet gateway, ingen NAT.
 | `novatrix-db-sg` | 3306 från `web-sg` | Ingenting |
 | `novatrix-efs-sg` | 2049 från `web-sg` | Ingenting |
  
-NACL:er per nivå (mgmt, web, data) upprepar samma regler som ett andra, oberoende lager.
+NACL:er per nivå (mgmt, web, data) ger motsvarande skydd per subnät som ett andra, oberoende lager. De är tillståndslösa, så returtrafiken måste tillåtas uttryckligen.
  
 ### *__IAM__*
  
@@ -3547,7 +3547,7 @@ AWS_MOV25/
 
 ### *__Hur infrastrukturen / miljön återskapas från repository__*
 
-Klona repository till ens dator om det inte redan finns. Kör `./V46_novatrix.sh`. Infrastrukturen / miljön återskapas helt från koden. Data återskapas inte, behövs det behöver man återställa det ifrån backup.
+Klona repository till ens dator om det inte redan finns. Kräver AWS CLI inloggad mot kontot och nyckelparet `AWS_MOV25` i eu-north-1. Kör `./V46_novatrix.sh`. Infrastrukturen / miljön återskapas helt från koden. Data återskapas inte, behövs det behöver man återställa det ifrån backup.
 
 ### *__Hur versionshantering hjälper drift och samarbete__*
 
