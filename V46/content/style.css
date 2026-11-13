@@ -1,0 +1,27 @@
+:root {
+  --bg: #f1f5f9; --card: #ffffff; --text: #1e293b; --muted: #64748b;
+  --accent: #0369a1; --warning: #f59e0b;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.6;
+  display: flex; flex-direction: column;
+}
+.top { padding: 20px 24px; }
+.logo { font-weight: 800; font-size: 1.25rem; letter-spacing: .02em; color: var(--accent); }
+.hero {
+  flex: 1; width: 100%; max-width: 640px; margin: 0 auto; padding: 24px 24px 48px;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.illustration { margin: 12px 0 20px; }
+.badge {
+  margin: 0; padding: 4px 12px; border-radius: 999px; font-size: .8rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em; background: #e0f2fe; color: #075985;
+}
+h1 { margin: 16px 0 8px; font-size: clamp(1.8rem, 5vw, 2.6rem); line-height: 1.2; }
+.lead { margin: 0 0 20px; font-size: 1.1rem; color: var(--muted); }
+a { color: var(--accent); font-weight: 600; }
+.footer { padding: 20px 24px; text-align: center; font-size: .85rem; color: var(--muted); }
+.footer p { margin: 0; }

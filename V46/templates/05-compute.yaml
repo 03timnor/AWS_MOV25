@@ -1,0 +1,523 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Novatrix V46 - layer 5 of 5: compute. One launch template per role (IMDSv2,
+  encrypted disk), a web server with WordPress on EFS + RDS and a bastion as the
+  only SSH entry point. The web server signals CloudFormation when WordPress is ready.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Instances }
+        Parameters: [ProjectName, AmiId, InstanceType, KeyName, SyncInterval]
+      - Label: { default: Database and secrets (names only) }
+        Parameters: [DbName, DbMasterUsername, DbAppUsername, DbMasterPasswordParam, DbAppPasswordParam, WpAdminPasswordParam]
+      - Label: { default: WordPress }
+        Parameters: [WpTitle, WpAdminUser, WpAdminEmail, WpLocale]
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: novatrix
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  AmiId:
+    # A plain image id, NOT the SSM path: the deploy script resolves the latest
+    # Amazon Linux 2023 the first time and keeps it, so a routine re-deploy never
+    # replaces the servers. A new AMI is a deliberate change (NEW_AMI=1).
+    Type: AWS::EC2::Image::Id
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small]
+    Description: t3.micro is free tier eligible in eu-north-1
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing key pair (CloudFormation checks that it exists)
+  SyncInterval:
+    Type: String
+    Default: 30min
+    Description: How often the web server pulls web/ from S3 (systemd time span)
+  DbName:                { Type: String, Default: wordpress }
+  DbMasterUsername:      { Type: String, Default: novatrixadmin, NoEcho: true }
+  DbAppUsername:         { Type: String, Default: wordpress }
+  DbMasterPasswordParam: { Type: String, Default: /novatrix/db/master-password }
+  DbAppPasswordParam:    { Type: String, Default: /novatrix/db/wordpress-password }
+  WpAdminPasswordParam:  { Type: String, Default: /novatrix/wordpress/admin-password }
+  WpTitle:               { Type: String, Default: Novatrix, AllowedPattern: "^[^']+$" }
+  WpAdminUser:           { Type: String, Default: novatrix-admin }
+  WpAdminEmail:          { Type: String, Default: admin@novatrix.example }
+  WpLocale:              { Type: String, Default: sv_SE }
+
+Resources:
+  # ===========================================================================
+  # One launch template per role. All configuration lives in the template, so
+  # ANY change (new AMI, new user data, new hardening) becomes a new template
+  # version - and a new version REPLACES the instance (immutable servers). The
+  # web server is stateless (WordPress lives on EFS + RDS), so nothing is lost.
+  #
+  # Hardening shared by both (kept identical on purpose):
+  #   IMDSv2 only (blocks SSRF-style credential theft with a plain GET),
+  #   encrypted gp3 root disk, CpuCredits=standard (no surplus CPU charges).
+  # ===========================================================================
+  WebLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectName}-web"
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { Encrypted: true, VolumeType: gp3, DeleteOnTermination: true }
+        CreditSpecification: { CpuCredits: standard }
+        IamInstanceProfile:
+          Name:
+            Fn::ImportValue: !Sub "${ProjectName}-Ec2InstanceProfileName"
+        # Part 1 (Fn::Sub): this server's settings, written to an env file.
+        # Part 2 (plain text, no substitution): the installation, which only reads
+        # the env file - so bash's own ${...} needs no escaping.
+        UserData:
+          Fn::Base64: !Join
+            - ""
+            - - !Sub
+                - |
+                  #!/bin/bash
+                  set -euo pipefail
+                  mkdir -p /etc/novatrix
+                  cat > /etc/novatrix/wordpress.env <<'ENV'
+                  REGION=${AWS::Region}
+                  CFN_STACK=${AWS::StackName}
+                  CFN_RESOURCE=WebServer
+                  BUCKET=${Bucket}
+                  FS_ID=${FsId}
+                  AP_ID=${ApId}
+                  DB_HOST=${DbHost}
+                  DB_PORT=${DbPort}
+                  DB_NAME=${DbName}
+                  DB_MASTER_USER=${DbMasterUsername}
+                  DB_APP_USER=${DbAppUsername}
+                  DB_MASTER_PW_PARAM=${DbMasterPasswordParam}
+                  DB_APP_PW_PARAM=${DbAppPasswordParam}
+                  WP_ADMIN_PW_PARAM=${WpAdminPasswordParam}
+                  WEB_TIER_CIDR=${WebTier}
+                  UPLOADER_ARN=${UploaderArn}
+                  SYNC_INTERVAL=${SyncInterval}
+                  WP_ROOT=/var/www/html
+                  WP_LOCALE=${WpLocale}
+                  WP_TITLE='${WpTitle}'
+                  WP_ADMIN_USER='${WpAdminUser}'
+                  WP_ADMIN_EMAIL='${WpAdminEmail}'
+                  ENV
+                  chmod 644 /etc/novatrix/wordpress.env
+                - Bucket:      { "Fn::ImportValue": !Sub "${ProjectName}-SiteBucketName" }
+                  FsId:        { "Fn::ImportValue": !Sub "${ProjectName}-FileSystemId" }
+                  ApId:        { "Fn::ImportValue": !Sub "${ProjectName}-AccessPointId" }
+                  DbHost:      { "Fn::ImportValue": !Sub "${ProjectName}-DbEndpoint" }
+                  DbPort:      { "Fn::ImportValue": !Sub "${ProjectName}-DbPort" }
+                  WebTier:     { "Fn::ImportValue": !Sub "${ProjectName}-WebTierCidr" }
+                  UploaderArn: { "Fn::ImportValue": !Sub "${ProjectName}-UploaderRoleArn" }
+              - |
+                source /etc/novatrix/wordpress.env
+
+                # --- Report the result to CloudFormation (CreationPolicy) -----------
+                # Runs on EVERY exit: 0 = done, anything else fails the stack at once
+                # instead of after the 20-minute timeout.
+                signal() {
+                  [ -x /opt/aws/bin/cfn-signal ] && /opt/aws/bin/cfn-signal -e "$1" \
+                    --stack "$CFN_STACK" --resource "$CFN_RESOURCE" --region "$REGION" || true
+                }
+                trap 'rc=$?; signal "$rc"; exit "$rc"' EXIT
+
+                # --- Packages: required ones must install, extras are best effort ----
+                dnf install -y aws-cfn-bootstrap httpd mod_ssl php php-fpm php-mysqlnd mariadb105 amazon-efs-utils
+                dnf install -y --setopt=strict=0 php-gd php-mbstring php-xml php-opcache php-intl || true
+
+                # --- TLS to the database: RDS requires it --------------------------------
+                # Trust Amazon RDS's CA, so both the mysql client and PHP verify that
+                # they really talk to OUR database (no man-in-the-middle).
+                curl -fsSL -o /etc/pki/ca-trust/source/anchors/rds-$REGION.pem \
+                  "https://truststore.pki.rds.amazonaws.com/$REGION/$REGION-bundle.pem"
+                update-ca-trust extract
+
+                # --- SSH hardening: reachable only from the bastion, no forwarding ---
+                cat > /etc/ssh/sshd_config.d/10-novatrix.conf <<'SSHD'
+                PermitRootLogin no
+                PasswordAuthentication no
+                KbdInteractiveAuthentication no
+                X11Forwarding no
+                AllowAgentForwarding no
+                MaxAuthTries 3
+                LoginGraceTime 30
+                ClientAliveInterval 300
+                ClientAliveCountMax 2
+                AllowTcpForwarding no
+                SSHD
+                # Validate before reloading: a typo must never lock us out of the server.
+                if sshd -t; then systemctl reload sshd
+                else echo "sshd rejected 10-novatrix.conf - removed it" >&2; rm -f /etc/ssh/sshd_config.d/10-novatrix.conf; fi
+
+                # --- HTTPS: self-signed certificate (no domain yet) ------------------
+                openssl req -x509 -nodes -newkey rsa:2048 -days 365 -subj "/CN=novatrix-web" \
+                  -keyout /etc/pki/tls/private/localhost.key -out /etc/pki/tls/certs/localhost.crt
+                chmod 600 /etc/pki/tls/private/localhost.key
+
+                # --- Apache + PHP hardening -------------------------------------------
+                # CSP/X-Frame-Options allow same-origin framing: WordPress's editor needs it.
+                cat > /etc/httpd/conf.d/10-novatrix-security.conf <<'CONF'
+                ServerTokens Prod
+                ServerSignature Off
+                TraceEnable Off
+                Header always set X-Content-Type-Options "nosniff"
+                Header always set X-Frame-Options "SAMEORIGIN"
+                Header always set Referrer-Policy "strict-origin-when-cross-origin"
+                Header always set Content-Security-Policy "frame-ancestors 'self'"
+
+                <Directory "/var/www/html">
+                    Options -Indexes +FollowSymLinks
+                    AllowOverride All
+                    Require all granted
+                </Directory>
+                # XML-RPC: old remote API, a favourite for password guessing. Not used here.
+                <Files "xmlrpc.php">
+                    Require all denied
+                </Files>
+                # Uploaded files are data, never code: no PHP runs from the uploads folder.
+                <Directory "/var/www/html/wp-content/uploads">
+                    <FilesMatch "\.(php|phtml|phar)$">
+                        Require all denied
+                    </FilesMatch>
+                </Directory>
+
+                # Static content published from S3 web/ (the Lambda chain)
+                Alias /static/ /var/www/static/
+                <Directory "/var/www/static">
+                    Options -Indexes
+                    AllowOverride None
+                    Require all granted
+                </Directory>
+                CONF
+                cat > /etc/php.d/90-novatrix.ini <<'INI'
+                expose_php = Off
+                upload_max_filesize = 16M
+                post_max_size = 16M
+                INI
+
+                # --- EFS: WordPress files on shared storage ----------------------------
+                # tls = encrypted NFS, iam = the instance role authenticates, accesspoint
+                # = forced to uid/gid 48 (apache). nofail: a missing EFS must never stop
+                # the server from booting (we would lose SSH).
+                mkdir -p "$WP_ROOT"
+                echo "$FS_ID:/ $WP_ROOT efs _netdev,nofail,tls,iam,accesspoint=$AP_ID 0 0" >> /etc/fstab
+                for i in $(seq 1 18); do
+                  mount "$WP_ROOT" 2>/dev/null && break
+                  echo "waiting for EFS / the instance role ($i/18)"; sleep 10
+                done
+                mountpoint -q "$WP_ROOT"
+                # Apache and PHP must never start on the empty local folder underneath.
+                for svc in httpd php-fpm; do
+                  mkdir -p /etc/systemd/system/$svc.service.d
+                  printf '[Unit]\nRequiresMountsFor=%s\n' "$WP_ROOT" > /etc/systemd/system/$svc.service.d/10-novatrix-efs.conf
+                done
+
+                # --- s3-curl: reach S3 with nothing but curl and the instance role ----
+                cat > /usr/local/bin/s3-curl <<'SH'
+                #!/bin/bash
+                set -euo pipefail
+                source /etc/novatrix/wordpress.env
+                IMDS="http://169.254.169.254/latest"
+                TOKEN=$(curl -sf -X PUT "$IMDS/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+                ROLE=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" "$IMDS/meta-data/iam/security-credentials/")
+                CREDS=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" "$IMDS/meta-data/iam/security-credentials/$ROLE")
+                field() { python3 -c "import json,sys; print(json.load(sys.stdin)['$1'])" <<<"$CREDS"; }
+                URL="https://${BUCKET}.s3.${REGION}.amazonaws.com/$1"
+                ARGS=(--silent --show-error --fail-with-body
+                      --aws-sigv4 "aws:amz:${REGION}:s3"
+                      --user "$(field AccessKeyId):$(field SecretAccessKey)"
+                      -H "x-amz-security-token: $(field Token)"
+                      -H "x-amz-content-sha256: UNSIGNED-PAYLOAD")
+                if [[ $# -ge 2 ]]; then curl "${ARGS[@]}" -T "$2" "$URL"; else curl "${ARGS[@]}" "$URL"; fi
+                SH
+                chmod 755 /usr/local/bin/s3-curl
+
+                # --- novatrix-sync: static content S3 web/ -> /var/www/static -------
+                mkdir -p /var/www/static
+                cat > /usr/local/bin/novatrix-sync <<'SH'
+                #!/bin/bash
+                source /etc/novatrix/wordpress.env
+                aws s3 sync "s3://$BUCKET/web/" /var/www/static/ --region "$REGION" --only-show-errors
+                SH
+                chmod 755 /usr/local/bin/novatrix-sync
+
+                # --- as-uploader: role chaining (reader -> uploader) ---------------
+                cat > /usr/local/bin/as-uploader <<'SH'
+                #!/bin/bash
+                set -euo pipefail
+                source /etc/novatrix/wordpress.env
+                CREDS=$(aws sts assume-role --region "$REGION" \
+                  --role-arn "$UPLOADER_ARN" \
+                  --role-session-name "uploader-$(hostname -s)" \
+                  --duration-seconds 900 \
+                  --query '[Credentials.AccessKeyId,Credentials.SecretAccessKey,Credentials.SessionToken]' \
+                  --output text)
+                read -r AK SK ST <<<"$CREDS"
+                AWS_ACCESS_KEY_ID=$AK AWS_SECRET_ACCESS_KEY=$SK AWS_SESSION_TOKEN=$ST exec "$@"
+                SH
+                chmod 755 /usr/local/bin/as-uploader
+
+                # --- novatrix-logs: archive Apache logs via the uploader role -------
+                cat > /usr/local/bin/novatrix-logs <<'SH'
+                #!/bin/bash
+                set -euo pipefail
+                source /etc/novatrix/wordpress.env
+                IMDS="http://169.254.169.254/latest"
+                TOKEN=$(curl -sf -X PUT "$IMDS/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+                IID=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" "$IMDS/meta-data/instance-id")
+                STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                for f in access_log error_log; do
+                  [[ -s "/var/log/httpd/$f" ]] || continue
+                  gzip -c "/var/log/httpd/$f" > "/tmp/$f.gz"
+                  /usr/local/bin/as-uploader aws s3 cp "/tmp/$f.gz" \
+                    "s3://$BUCKET/logs/$IID/$STAMP-$f.gz" --region "$REGION" --only-show-errors
+                  rm -f "/tmp/$f.gz"
+                  echo "Uploaded $f -> logs/$IID/$STAMP-$f.gz"
+                done
+                SH
+                chmod 755 /usr/local/bin/novatrix-logs
+
+                # --- novatrix-db: mysql client, password from SSM (never on disk) -----
+                # Usage: novatrix-db app|master [args]   (NOVATRIX_DUMP=1 -> mysqldump)
+                cat > /usr/local/bin/novatrix-db <<'SH'
+                #!/bin/bash
+                set -euo pipefail
+                source /etc/novatrix/wordpress.env
+                case "${1:-}" in
+                  app)    user=$DB_APP_USER;    param=$DB_APP_PW_PARAM ;;
+                  master) user=$DB_MASTER_USER; param=$DB_MASTER_PW_PARAM ;;
+                  *) echo "usage: novatrix-db app|master [args]" >&2; exit 2 ;;
+                esac
+                shift
+                pw=$(aws ssm get-parameter --region "$REGION" --name "$param" --with-decryption \
+                       --query Parameter.Value --output text)
+                cnf=$(mktemp); trap 'rm -f "$cnf"' EXIT
+                printf '[client]\nhost=%s\nport=%s\nuser=%s\npassword=%s\nssl-ca=/etc/pki/ca-trust/source/anchors/rds-%s.pem\nssl-verify-server-cert\n' \
+                  "$DB_HOST" "$DB_PORT" "$user" "$pw" "$REGION" > "$cnf"
+                if [[ -n "${NOVATRIX_DUMP:-}" ]]; then mysqldump --defaults-extra-file="$cnf" "$@"
+                else mysql --defaults-extra-file="$cnf" "$@"; fi
+                SH
+                chmod 750 /usr/local/bin/novatrix-db
+
+                # --- novatrix-backup: DB dump + wp-content -> S3 backup/ (uploader) ---
+                cat > /usr/local/bin/novatrix-backup <<'SH'
+                #!/bin/bash
+                set -euo pipefail
+                source /etc/novatrix/wordpress.env
+                STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                DUMP=$(mktemp /tmp/novatrix-db-XXXXXX.sql.gz); trap 'rm -f "$DUMP"' EXIT
+                # Dump first, upload after: a failed dump never becomes an empty "backup".
+                NOVATRIX_DUMP=1 /usr/local/bin/novatrix-db app --single-transaction --no-tablespaces "$DB_NAME" | gzip > "$DUMP"
+                /usr/local/bin/as-uploader aws s3 cp "$DUMP" \
+                  "s3://$BUCKET/backup/db/$STAMP-$DB_NAME.sql.gz" --region "$REGION" --only-show-errors
+                echo "Uploaded backup/db/$STAMP-$DB_NAME.sql.gz"
+                tar -czf - -C "$WP_ROOT" wp-content | /usr/local/bin/as-uploader aws s3 cp - \
+                  "s3://$BUCKET/backup/files/$STAMP-wp-content.tar.gz" --region "$REGION" --only-show-errors
+                echo "Uploaded backup/files/$STAMP-wp-content.tar.gz"
+                SH
+                chmod 750 /usr/local/bin/novatrix-backup
+
+                # --- systemd: sync (interval), logs + backup (daily), wp-cron (5 min) --
+                unit() {   # name description exec-start [user]
+                  printf '[Unit]\nDescription=%s\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=%s\n' \
+                    "$2" "$3" > /etc/systemd/system/$1.service
+                  [[ -n "${4:-}" ]] && echo "User=$4" >> /etc/systemd/system/$1.service
+                  return 0
+                }
+                timer() {  # name description timer-lines
+                  printf '[Unit]\nDescription=%s\n[Timer]\n%s\n[Install]\nWantedBy=timers.target\n' "$2" "$3" \
+                    > /etc/systemd/system/$1.timer
+                }
+                unit  novatrix-sync   "Pull the published static content from S3" /usr/local/bin/novatrix-sync
+                timer novatrix-sync   "Pull static content periodically" "OnBootSec=2min
+                OnUnitActiveSec=$SYNC_INTERVAL"
+                unit  novatrix-logs "Archive Apache logs to S3 via the uploader role" /usr/local/bin/novatrix-logs
+                timer novatrix-logs "Archive Apache logs daily" "OnCalendar=daily
+                Persistent=true"
+                unit  novatrix-backup "Back up WordPress (database + wp-content) to S3" /usr/local/bin/novatrix-backup
+                timer novatrix-backup "Back up WordPress daily" "OnCalendar=*-*-* 00:00:00
+                Persistent=true"
+                # WordPress's own cron is triggered by an HTTP call to the site itself -
+                # the web security group (correctly) doesn't allow that, so systemd runs it.
+                unit  novatrix-wpcron "WordPress scheduled tasks" "/usr/bin/php $WP_ROOT/wp-cron.php" apache
+                timer novatrix-wpcron "WordPress scheduled tasks every 5 minutes" "OnBootSec=5min
+                OnUnitActiveSec=5min"
+
+                # --- Database: WordPress's own user (master password only used here) ---
+                for i in $(seq 1 30); do
+                  /usr/local/bin/novatrix-db master -e "SELECT 1" >/dev/null 2>&1 && break
+                  echo "waiting for the database ($i/30)"; sleep 10
+                done
+                APP_PW=$(aws ssm get-parameter --region "$REGION" --name "$DB_APP_PW_PARAM" --with-decryption \
+                           --query Parameter.Value --output text)
+                # Host part = the web tier (CIDR from layer 1, as MariaDB's net/mask):
+                # the user can't log in from anywhere else.
+                bits=${WEB_TIER_CIDR#*/}
+                m=$(( (0xffffffff << (32 - bits)) & 0xffffffff ))
+                DB_USER_HOST="${WEB_TIER_CIDR%/*}/$(( m >> 24 & 255 )).$(( m >> 16 & 255 )).$(( m >> 8 & 255 )).$(( m & 255 ))"
+                /usr/local/bin/novatrix-db master <<SQL
+                CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+                CREATE USER IF NOT EXISTS '$DB_APP_USER'@'$DB_USER_HOST' IDENTIFIED BY '$APP_PW';
+                ALTER USER '$DB_APP_USER'@'$DB_USER_HOST' IDENTIFIED BY '$APP_PW';
+                GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_APP_USER'@'$DB_USER_HOST';
+                SQL
+
+                # --- WordPress on EFS (WP-CLI). Idempotent: a replaced web server finds
+                # WordPress already installed on EFS/RDS and just serves it. --------------
+                curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+                chmod 755 /usr/local/bin/wp
+                # 512 MB: PHP's default 128 MB is too little to unpack the WordPress archive.
+                WP=(/usr/bin/php -d memory_limit=512M /usr/local/bin/wp --path="$WP_ROOT" --allow-root)
+                [[ -f "$WP_ROOT/wp-includes/version.php" ]] || "${WP[@]}" core download --locale="$WP_LOCALE"
+                if [[ ! -f "$WP_ROOT/wp-config.php" ]]; then
+                  "${WP[@]}" config create --dbname="$DB_NAME" --dbuser="$DB_APP_USER" --dbpass="$APP_PW" \
+                    --dbhost="$DB_HOST:$DB_PORT" --locale="$WP_LOCALE" --skip-check --extra-php <<'PHP'
+                // Novatrix: the site address follows the address the visitor used, because
+                // the public IP changes when the instance is stopped/started (no domain yet).
+                if (isset($_SERVER['HTTP_HOST'])) {
+                    $novatrix_scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+                    define('WP_HOME', $novatrix_scheme . '://' . $_SERVER['HTTP_HOST']);
+                    define('WP_SITEURL', WP_HOME);
+                }
+                define('MYSQL_CLIENT_FLAGS', MYSQLI_CLIENT_SSL);   // TLS to RDS (CA in the system trust store)
+                define('DISABLE_WP_CRON', true);      // runs from systemd (novatrix-wpcron.timer)
+                define('DISALLOW_FILE_EDIT', true);   // no PHP editing from the admin panel
+                define('FS_METHOD', 'direct');
+                define('WP_AUTO_UPDATE_CORE', 'minor');
+                PHP
+                fi
+                if ! "${WP[@]}" core is-installed 2>/dev/null; then
+                  TOKEN=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+                  PUBLIC_IP=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+                  ADMIN_PW=$(aws ssm get-parameter --region "$REGION" --name "$WP_ADMIN_PW_PARAM" --with-decryption \
+                               --query Parameter.Value --output text)
+                  "${WP[@]}" core install --url="http://$PUBLIC_IP" --title="$WP_TITLE" \
+                    --admin_user="$WP_ADMIN_USER" --admin_password="$ADMIN_PW" \
+                    --admin_email="$WP_ADMIN_EMAIL" --skip-email
+                  "${WP[@]}" option update blogdescription "WordPress on RDS and EFS - built with CloudFormation"
+                  "${WP[@]}" post create --post_type=page --post_status=publish --post_title="About Novatrix" \
+                    --post_content="This whole environment - network, servers, database, storage and permissions - is created from CloudFormation templates in Git."
+                fi
+                mkdir -p "$WP_ROOT/wp-content/uploads"
+
+                # --- First static sync (retry while the role's credentials arrive) ----
+                for i in $(seq 1 12); do
+                  /usr/local/bin/novatrix-sync && [[ -f /var/www/static/index.html ]] && break
+                  sleep 5
+                done
+
+                systemctl daemon-reload
+                systemctl enable --now php-fpm httpd novatrix-sync.timer novatrix-logs.timer \
+                  novatrix-backup.timer novatrix-wpcron.timer
+                # Prove the site answers before telling CloudFormation we're done.
+                curl -sf -o /dev/null http://localhost/
+                echo "Novatrix WordPress ready"
+
+  # ===========================================================================
+  # Web server: public subnet web-a, web security group, reader role.
+  # CreationPolicy: CloudFormation waits until the server itself reports that
+  # WordPress is installed (cfn-signal at the end of user data). A failed
+  # installation fails the deploy - "the stack is green" means "the site works".
+  # ===========================================================================
+  WebServer:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal: { Count: 1, Timeout: PT20M }
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebLaunchTemplate
+        Version: !GetAtt WebLaunchTemplate.LatestVersionNumber
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          AssociatePublicIpAddress: true
+          SubnetId:
+            Fn::ImportValue: !Sub "${ProjectName}-WebSubnetAId"
+          GroupSet:
+            - Fn::ImportValue: !Sub "${ProjectName}-WebSgId"
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-web" }
+        - { Key: Role, Value: web }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Bastion: public subnet mgmt-a, bastion security group, NO IAM role.
+  # User data installs NOTHING (its security group doesn't even let it reach
+  # the internet). It only hardens SSH: forward SSH (port 22) and nothing else,
+  # so it can't be used as a tunnel to the database.
+  # ===========================================================================
+  BastionLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectName}-bastion"
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { Encrypted: true, VolumeType: gp3, DeleteOnTermination: true }
+        CreditSpecification: { CpuCredits: standard }
+        UserData:
+          Fn::Base64: |
+            #!/bin/bash
+            set -e
+            cat > /etc/ssh/sshd_config.d/10-novatrix.conf <<'SSHD'
+            PermitRootLogin no
+            PasswordAuthentication no
+            KbdInteractiveAuthentication no
+            X11Forwarding no
+            AllowAgentForwarding no
+            MaxAuthTries 3
+            LoginGraceTime 30
+            ClientAliveInterval 300
+            ClientAliveCountMax 2
+            AllowTcpForwarding local
+            PermitOpen *:22
+            SSHD
+            # Validate before reloading: a typo must never lock us out of the server.
+            if sshd -t; then systemctl reload sshd
+            else echo "sshd rejected 10-novatrix.conf - removed it" >&2; rm -f /etc/ssh/sshd_config.d/10-novatrix.conf; fi
+
+  Bastion:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BastionLaunchTemplate
+        Version: !GetAtt BastionLaunchTemplate.LatestVersionNumber
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          AssociatePublicIpAddress: true
+          SubnetId:
+            Fn::ImportValue: !Sub "${ProjectName}-MgmtSubnetAId"
+          GroupSet:
+            - Fn::ImportValue: !Sub "${ProjectName}-BastionSgId"
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-bastion" }
+        - { Key: Role, Value: bastion }
+        - { Key: Project, Value: !Ref ProjectName }
+
+Outputs:
+  AmiId:            { Value: !Ref AmiId }
+  WebLaunchTemplateVersion:     { Value: !GetAtt WebLaunchTemplate.LatestVersionNumber }
+  BastionLaunchTemplateVersion: { Value: !GetAtt BastionLaunchTemplate.LatestVersionNumber }
+  WebServerId:      { Value: !Ref WebServer }
+  BastionId:        { Value: !Ref Bastion }
+  # Public IPs change when an instance is stopped/started - the scripts always
+  # ask EC2 for the current one. These show the address at deploy time.
+  WebServerPrivateIp: { Value: !GetAtt WebServer.PrivateIp }
+  BastionPrivateIp:   { Value: !GetAtt Bastion.PrivateIp }

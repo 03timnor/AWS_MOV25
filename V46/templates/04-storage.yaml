@@ -1,0 +1,210 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Novatrix V46 - layer 4 of 5: storage. One private S3 bucket (drafts/, web/,
+  logs/, backup/) with bucket policy and lifecycle rules, plus the publisher
+  (Lambda) that S3 triggers when a draft is uploaded.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: novatrix
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  SiteBucket:
+    Type: String
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+    Description: Bucket name (globally unique - the deploy script appends the account id)
+  BackupRetentionDays:
+    Type: Number
+    Default: 14
+    MinValue: 1
+    Description: backup/ objects (DB dumps + wp-content) are deleted after this many days
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    Description: logs/ objects (Apache logs) are deleted after this many days
+
+Resources:
+  # Created here (not by Lambda) so the Lambda role needs no logs:CreateLogGroup.
+  PublisherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-publisher"
+      RetentionInDays: 7
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Publisher: copies approved drafts from drafts/ to web/. The code lives in
+  # the template itself (inline, < 4 KB), so it is versioned with everything else.
+  # ===========================================================================
+  PublisherFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: PublisherLogGroup
+    Properties:
+      FunctionName: !Sub "${ProjectName}-publisher"
+      Description: Publishes approved drafts drafts/ -> web/
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role:
+        Fn::ImportValue: !Sub "${ProjectName}-LambdaRoleArn"
+      Timeout: 15
+      MemorySize: 128
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+      Code:
+        ZipFile: |
+          """Publisher: copies approved drafts from drafts/ to web/.
+
+          Only web file types are published, and with a correct Content-Type, so a
+          draft can never put e.g. a script or an executable on the website.
+          """
+          import json
+          import os
+          import urllib.parse
+
+          import boto3
+
+          s3 = boto3.client("s3")
+
+          ALLOWED = {
+              ".html": "text/html; charset=utf-8",
+              ".css": "text/css; charset=utf-8",
+              ".js": "text/javascript; charset=utf-8",
+              ".txt": "text/plain; charset=utf-8",
+              ".svg": "image/svg+xml",
+              ".png": "image/png",
+              ".jpg": "image/jpeg",
+              ".jpeg": "image/jpeg",
+              ".webp": "image/webp",
+              ".ico": "image/x-icon",
+          }
+          MAX_BYTES = 5 * 1024 * 1024
+
+
+          def log(**fields):
+              print(json.dumps(fields, ensure_ascii=False))
+
+
+          def lambda_handler(event, context):
+              for record in event["Records"]:
+                  bucket = record["s3"]["bucket"]["name"]
+                  key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
+                  size = record["s3"]["object"].get("size", 0)
+                  rel = key[len("drafts/"):] if key.startswith("drafts/") else ""
+                  ext = os.path.splitext(rel)[1].lower()
+
+                  if not rel or ".." in rel or rel.endswith("/"):
+                      log(rejected=key, reason="invalid path")
+                  elif ext not in ALLOWED:
+                      log(rejected=key, reason=f"file type {ext or '(none)'} is not published")
+                  elif size > MAX_BYTES:
+                      log(rejected=key, reason="file is larger than 5 MB")
+                  else:
+                      body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+                      s3.put_object(Bucket=bucket, Key=f"web/{rel}", Body=body,
+                                    ContentType=ALLOWED[ext], CacheControl="max-age=300")
+                      log(published=f"web/{rel}", bytes=len(body))
+              return {"ok": True}
+
+  # Resource-based policy on the Lambda: only S3, only from OUR bucket and OUR
+  # account may invoke it (protects against the confused deputy problem).
+  # The bucket ARN is built from the name, which breaks the circular
+  # dependency bucket -> function -> permission -> bucket.
+  PublisherPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PublisherFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub "arn:aws:s3:::${SiteBucket}"
+      SourceAccount: !Ref AWS::AccountId
+
+  # ===========================================================================
+  # The bucket. Private: visitors reach the site through EC2, never S3 directly.
+  # ===========================================================================
+  Bucket:
+    Type: AWS::S3::Bucket
+    DependsOn: PublisherPermission     # S3 tests the trigger when it is created
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref SiteBucket
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      # Storage (and cost) never grows without limit.
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-backups
+            Status: Enabled
+            Prefix: backup/
+            ExpirationInDays: !Ref BackupRetentionDays
+          - Id: expire-old-logs
+            Status: Enabled
+            Prefix: logs/
+            ExpirationInDays: !Ref LogRetentionDays
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+      # Trigger only on drafts/ - the Lambda writes to web/, so it can never
+      # trigger itself.
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt PublisherFunction.Arn
+            Filter:
+              S3Key:
+                Rules: [{ Name: prefix, Value: drafts/ }]
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # Resource policy:
+  #  1. refuse every request that is not encrypted in transit (TLS)
+  #  2. the web server's roles only work from inside the VPC, through the S3
+  #     endpoint. Stolen instance credentials are useless anywhere else.
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OnlyTLS
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt Bucket.Arn
+              - !Sub "${Bucket.Arn}/*"
+            Condition: { Bool: { "aws:SecureTransport": "false" } }
+          - Sid: InstanceRolesOnlyViaVpcEndpoint
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt Bucket.Arn
+              - !Sub "${Bucket.Arn}/*"
+            Condition:
+              ArnEquals:
+                "aws:PrincipalArn":
+                  - Fn::ImportValue: !Sub "${ProjectName}-Ec2RoleArn"
+                  - Fn::ImportValue: !Sub "${ProjectName}-UploaderRoleArn"
+              StringNotEquals:
+                "aws:SourceVpce":
+                  Fn::ImportValue: !Sub "${ProjectName}-S3EndpointId"
+
+Outputs:
+  SiteBucketName:
+    Value: !Ref Bucket
+    Export: { Name: !Sub "${ProjectName}-SiteBucketName" }
+  PublisherFunctionName:
+    Value: !Ref PublisherFunction
+  PublisherLogGroupName:
+    Value: !Ref PublisherLogGroup

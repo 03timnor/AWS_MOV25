@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Novatrix – static page</title>
+  <meta name="description" content="Static content published from S3.">
+  <link rel="icon" href="images/crane.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <span class="logo">Novatrix</span>
+  </header>
+
+  <main class="hero">
+    <img src="images/crane.svg" alt="" class="illustration" width="160" height="160">
+    <p class="badge">Static page</p>
+    <h1>Static content from S3</h1>
+    <p class="lead">This page lives in Git, is uploaded as a draft, checked by the publisher
+      (Lambda) and fetched by the web server from S3. The website itself is WordPress.</p>
+    <p><a href="/">To the Novatrix website</a></p>
+  </main>
+
+  <footer class="footer">
+    <p>&copy; 2026 Novatrix</p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,656 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Novatrix V46 - layer 1 of 5: network. VPC with three tiers (mgmt, web, data),
+  route tables, S3 gateway endpoint, security groups AND network ACLs (defense
+  in depth) and VPC flow logs. Exports its ids to layers 2-5.
+
+# =============================================================================
+# Address plan (defaults, every CIDR is a parameter)
+#
+#   mgmt-a  10.0.0.0/24   public   bastion host (the only SSH entry point)
+#   web-a   10.0.2.0/24   public   web server (Apache + WordPress)
+#   web-b   10.0.3.0/24   public   reserved: second web server / load balancer
+#   data-a  10.0.10.0/24  private  RDS MariaDB + EFS mount target, NO internet route
+#   data-b  10.0.11.0/24  private  EFS mount target (the DB subnet group needs two AZs)
+#
+# Web tier = web-a + web-b (/23), data tier = data-a + data-b (/23), so one
+# NACL rule covers both subnets of a tier.
+# =============================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: General }
+        Parameters: [ProjectName, AdminCidr, SiteBucket, DbPort]
+      - Label: { default: Address plan }
+        Parameters: [VpcCidr, MgmtACidr, WebACidr, WebBCidr, WebTierCidr, DataACidr, DataBCidr, DataTierCidr]
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: novatrix
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+    Description: Prefix for resource names, tags and the exports the other layers import
+  AdminCidr:
+    Type: String
+    Description: The only address allowed to SSH to the bastion (your public IP /32)
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/32$'
+    ConstraintDescription: Must be a single host, e.g. 203.0.113.10/32
+  SiteBucket:
+    Type: String
+    Description: The project bucket - the only bucket the S3 endpoint lets through
+  DbPort:
+    Type: Number
+    Default: 3306
+    Description: Database port (MariaDB 3306) - exported, the data layer uses the same value
+  VpcCidr:      { Type: String, Default: 10.0.0.0/16,  AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$' }
+  MgmtACidr:    { Type: String, Default: 10.0.0.0/24,  AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$' }
+  WebACidr:     { Type: String, Default: 10.0.2.0/24,  AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$' }
+  WebBCidr:     { Type: String, Default: 10.0.3.0/24,  AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$' }
+  WebTierCidr:  { Type: String, Default: 10.0.2.0/23,  AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$', Description: Covers web-a + web-b }
+  DataACidr:    { Type: String, Default: 10.0.10.0/24, AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$' }
+  DataBCidr:    { Type: String, Default: 10.0.11.0/24, AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$' }
+  DataTierCidr: { Type: String, Default: 10.0.10.0/23, AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$', Description: Covers data-a + data-b }
+
+Mappings:
+  # Ephemeral (client) ports. Our servers run Linux, which picks source ports
+  # in 32768-60999, so return traffic TO our servers only needs that range.
+  # Visitors and admins can be anything (Windows, NAT), so traffic FROM our
+  # servers back to them uses the wide range 1024-65535.
+  Ports:
+    Linux: { From: 32768, To: 60999 }
+
+Resources:
+  # ===========================================================================
+  # VPC + internet gateway
+  # ===========================================================================
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-vpc" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-igw" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ===========================================================================
+  # Subnets. MapPublicIpOnLaunch is OFF even in the public subnets: only an
+  # instance that explicitly asks for a public IP gets one.
+  # ===========================================================================
+  MgmtSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref MgmtACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-mgmt-a (public)" }
+        - { Key: Tier, Value: mgmt }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  WebSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref WebACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-web-a (public)" }
+        - { Key: Tier, Value: web }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  WebSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref WebBCidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-web-b (public)" }
+        - { Key: Tier, Value: web }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  DataSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref DataACidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-data-a (private)" }
+        - { Key: Tier, Value: data }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  DataSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref DataBCidr
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-data-b (private)" }
+        - { Key: Tier, Value: data }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Route tables
+  #   public : local + 0.0.0.0/0 -> IGW + S3 prefix list -> gateway endpoint
+  #   private: local ONLY. No IGW, no NAT: the data tier cannot reach or be
+  #            reached from the internet, whatever the firewalls say.
+  # ===========================================================================
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-rt-public" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-rt-private" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  MgmtSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref MgmtSubnetA, RouteTableId: !Ref PublicRouteTable }
+  WebSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref WebSubnetA, RouteTableId: !Ref PublicRouteTable }
+  WebSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref WebSubnetB, RouteTableId: !Ref PublicRouteTable }
+  DataSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref DataSubnetA, RouteTableId: !Ref PrivateRouteTable }
+  DataSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref DataSubnetB, RouteTableId: !Ref PrivateRouteTable }
+
+  # ===========================================================================
+  # S3 gateway endpoint (free). S3 traffic from the public subnets stays on the
+  # AWS network, and the bucket policy (layer 4) demands that the instance
+  # roles are only used from here (stolen credentials are useless outside).
+  # The endpoint policy only lets through OUR bucket and the Amazon Linux
+  # package repository - an attacker on the server can't copy data out to his
+  # own bucket in this region.
+  # ===========================================================================
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PublicRouteTable]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OnlyProjectBucket
+            Effect: Allow
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !Sub arn:aws:s3:::${SiteBucket}
+              - !Sub arn:aws:s3:::${SiteBucket}/*
+          - Sid: AmazonLinuxPackageRepos
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::al2023-repos-${AWS::Region}-de612dc2/*
+
+  # ===========================================================================
+  # Security groups (stateful, per instance). Rules reference OTHER security
+  # groups instead of IP addresses where possible: "only the bastion may SSH",
+  # "only the web servers may reach the database".
+  #
+  # Defining SecurityGroupEgress inline replaces AWS's default "allow all out".
+  # Rules that would create a reference loop are separate resources below.
+  # ===========================================================================
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-db-sg"
+      GroupDescription: RDS database - only the web servers, on the DB port
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        # A security group cannot be completely empty outbound in CloudFormation,
+        # so the only rule points at loopback = the database can start nothing.
+        - { IpProtocol: "-1", CidrIp: 127.0.0.1/32, Description: No outbound traffic }
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-db-sg" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-efs-sg"
+      GroupDescription: EFS mount targets - only the web servers, NFS 2049
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: 127.0.0.1/32, Description: No outbound traffic }
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-efs-sg" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-web-sg"
+      GroupDescription: Web server - HTTP/HTTPS from everyone, SSH only from the bastion
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80,  ToPort: 80,  CidrIp: 0.0.0.0/0, Description: HTTP from the internet }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS from the internet }
+        - { IpProtocol: icmp, FromPort: 3, ToPort: 4, CidrIp: 0.0.0.0/0, Description: Path MTU Discovery }
+      SecurityGroupEgress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: "HTTPS out: S3, STS, SSM, CloudFormation, package repos" }
+        - IpProtocol: tcp
+          FromPort: !Ref DbPort
+          ToPort: !Ref DbPort
+          DestinationSecurityGroupId: !Ref DbSecurityGroup
+          Description: To the database (RDS)
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          DestinationSecurityGroupId: !Ref EfsSecurityGroup
+          Description: To shared storage (EFS, NFS)
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-web-sg" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-bastion-sg"
+      GroupDescription: Bastion - SSH only from the admin IP, out only SSH to the web servers
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref AdminCidr, Description: SSH from the admin IP }
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          DestinationSecurityGroupId: !Ref WebSecurityGroup
+          Description: SSH onward to the web servers
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-bastion-sg" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  WebIngressSshFromBastion:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WebSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref BastionSecurityGroup
+      Description: SSH only from the bastion
+
+  DbIngressFromWeb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DbSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DbPort
+      ToPort: !Ref DbPort
+      SourceSecurityGroupId: !Ref WebSecurityGroup
+      Description: Database port only from the web servers
+
+  EfsIngressFromWeb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EfsSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref WebSecurityGroup
+      Description: NFS only from the web servers
+
+  # ===========================================================================
+  # Network ACLs (stateless, per subnet) - the second, independent firewall.
+  # Stateless means return traffic must be allowed explicitly (ephemeral ports).
+  # Everything not listed hits the implicit rule "*  DENY".
+  # ===========================================================================
+
+  # ----- mgmt tier (bastion) -------------------------------------------------
+  MgmtNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-nacl-mgmt" }
+        - { Key: Project, Value: !Ref ProjectName }
+  MgmtNaclInSshAdmin:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref MgmtNacl
+      RuleNumber: 100
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref AdminCidr
+      PortRange: { From: 22, To: 22 }
+  MgmtNaclInReturnFromWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref MgmtNacl
+      RuleNumber: 110
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref WebTierCidr
+      PortRange: { From: !FindInMap [Ports, Linux, From], To: !FindInMap [Ports, Linux, To] }
+  MgmtNaclOutReturnToAdmin:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref MgmtNacl
+      RuleNumber: 100
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref AdminCidr
+      PortRange: { From: 1024, To: 65535 }
+  MgmtNaclOutSshToWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref MgmtNacl
+      RuleNumber: 110
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref WebTierCidr
+      PortRange: { From: 22, To: 22 }
+  MgmtNaclAssocA:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref MgmtSubnetA, NetworkAclId: !Ref MgmtNacl }
+
+  # ----- web tier ---------------------------------------------------------------
+  WebNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-nacl-web" }
+        - { Key: Project, Value: !Ref ProjectName }
+  WebNaclInHttp:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 100
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: 80, To: 80 }
+  WebNaclInHttps:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 110
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: 443, To: 443 }
+  WebNaclInSshFromMgmt:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 120
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref MgmtACidr
+      PortRange: { From: 22, To: 22 }
+  WebNaclInReturn:
+    # Answers to the server's OWN outbound connections (S3, STS, SSM, packages,
+    # wordpress.org, CloudFormation, DB, EFS). Linux range only, so e.g. 3306,
+    # 8080 and 9200 from the internet are stopped here already.
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 130
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: !FindInMap [Ports, Linux, From], To: !FindInMap [Ports, Linux, To] }
+  WebNaclInPmtud:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 140
+      Egress: false
+      Protocol: 1
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      Icmp: { Type: 3, Code: 4 }
+  WebNaclOutReturn:
+    # Answers to visitors (any client OS) and to the bastion.
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 100
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: 1024, To: 65535 }
+  WebNaclOutHttps:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 110
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: 0.0.0.0/0
+      PortRange: { From: 443, To: 443 }
+  WebNaclOutDb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 120
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref DataTierCidr
+      PortRange: { From: !Ref DbPort, To: !Ref DbPort }
+  WebNaclOutNfs:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 130
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref DataTierCidr
+      PortRange: { From: 2049, To: 2049 }
+  WebNaclAssocA:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref WebSubnetA, NetworkAclId: !Ref WebNacl }
+  WebNaclAssocB:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref WebSubnetB, NetworkAclId: !Ref WebNacl }
+
+  # ----- data tier (database + EFS) ----------------------------------------------
+  DataNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-nacl-data" }
+        - { Key: Project, Value: !Ref ProjectName }
+  DataNaclInDbFromWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DataNacl
+      RuleNumber: 100
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref WebTierCidr
+      PortRange: { From: !Ref DbPort, To: !Ref DbPort }
+  DataNaclInNfsFromWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DataNacl
+      RuleNumber: 110
+      Egress: false
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref WebTierCidr
+      PortRange: { From: 2049, To: 2049 }
+  DataNaclOutReturnToWeb:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DataNacl
+      RuleNumber: 100
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref WebTierCidr
+      PortRange: { From: !FindInMap [Ports, Linux, From], To: !FindInMap [Ports, Linux, To] }
+  DataNaclAssocA:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref DataSubnetA, NetworkAclId: !Ref DataNacl }
+  DataNaclAssocB:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: { SubnetId: !Ref DataSubnetB, NetworkAclId: !Ref DataNacl }
+
+  # ===========================================================================
+  # VPC flow logs: every accepted AND rejected connection attempt in the VPC,
+  # 1-minute aggregation, kept 7 days.
+  # ===========================================================================
+  FlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/${ProjectName}/vpc-flow-logs"
+      RetentionInDays: 7
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  FlowLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-flow-log-role"
+      Description: Lets the VPC flow log service write to the project's flow log group only
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: vpc-flow-logs.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:   # confused deputy protection: only for OUR account
+              StringEquals: { "aws:SourceAccount": !Ref AWS::AccountId }
+              ArnLike: { "aws:SourceArn": !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:vpc-flow-log/*" }
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-flow-log-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !GetAtt FlowLogGroup.Arn
+              - Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  VpcFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceId: !Ref Vpc
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref FlowLogGroup
+      DeliverLogsPermissionArn: !GetAtt FlowLogRole.Arn
+      MaxAggregationInterval: 60
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-flow-log" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+# Exports (<ProjectName>-<Key>) are what layers 2-5 import. An export that is in use
+# can't be changed or deleted - CloudFormation protects the dependency.
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export: { Name: !Sub "${ProjectName}-VpcId" }
+  DefaultSecurityGroupId:
+    Value: !GetAtt Vpc.DefaultSecurityGroup
+  MgmtSubnetAId:
+    Value: !Ref MgmtSubnetA
+    Export: { Name: !Sub "${ProjectName}-MgmtSubnetAId" }
+  WebSubnetAId:
+    Value: !Ref WebSubnetA
+    Export: { Name: !Sub "${ProjectName}-WebSubnetAId" }
+  WebSubnetBId:
+    Value: !Ref WebSubnetB
+    Export: { Name: !Sub "${ProjectName}-WebSubnetBId" }
+  DataSubnetAId:
+    Value: !Ref DataSubnetA
+    Export: { Name: !Sub "${ProjectName}-DataSubnetAId" }
+  DataSubnetBId:
+    Value: !Ref DataSubnetB
+    Export: { Name: !Sub "${ProjectName}-DataSubnetBId" }
+  WebTierCidr:
+    Value: !Ref WebTierCidr
+    Export: { Name: !Sub "${ProjectName}-WebTierCidr" }
+  DbPort:
+    Value: !Ref DbPort
+    Export: { Name: !Sub "${ProjectName}-DbPort" }
+  PublicRouteTableId:   { Value: !Ref PublicRouteTable }
+  PrivateRouteTableId:  { Value: !Ref PrivateRouteTable }
+  BastionSgId:
+    Value: !Ref BastionSecurityGroup
+    Export: { Name: !Sub "${ProjectName}-BastionSgId" }
+  WebSgId:
+    Value: !Ref WebSecurityGroup
+    Export: { Name: !Sub "${ProjectName}-WebSgId" }
+  DbSgId:
+    Value: !Ref DbSecurityGroup
+    Export: { Name: !Sub "${ProjectName}-DbSgId" }
+  EfsSgId:
+    Value: !Ref EfsSecurityGroup
+    Export: { Name: !Sub "${ProjectName}-EfsSgId" }
+  MgmtNaclId:           { Value: !Ref MgmtNacl }
+  WebNaclId:            { Value: !Ref WebNacl }
+  DataNaclId:           { Value: !Ref DataNacl }
+  S3EndpointId:
+    Value: !Ref S3Endpoint
+    Export: { Name: !Sub "${ProjectName}-S3EndpointId" }
+  FlowLogGroupName:
+    Value: !Ref FlowLogGroup
+    Export: { Name: !Sub "${ProjectName}-FlowLogGroupName" }

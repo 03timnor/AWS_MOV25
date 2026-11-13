@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Novatrix V46 - layer 2 of 5: data. RDS MariaDB and EFS (shared WordPress
+  files) in the network's private data tier. Imports subnets and security
+  groups from layer 1.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: novatrix
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+    Description: Same prefix as the network layer (its exports are imported)
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedValues: [db.t4g.micro, db.t3.micro]
+    Description: Free tier / Free plan classes only - a typo can't create an expensive database
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 20
+    Description: GiB of gp2 storage (20 = free tier allowance and RDS minimum)
+  DbBackupRetentionDays:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 1
+    Description: Days of automated RDS backups (Free plan allows at most 1)
+  DbName:
+    Type: String
+    Default: wordpress
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]{0,63}$'
+  DbMasterUsername:
+    Type: String
+    Default: novatrixadmin
+    NoEcho: true
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]{0,15}$'
+  DbMasterPasswordParam:
+    Type: String
+    Default: /novatrix/db/master-password
+    AllowedPattern: '^/[a-zA-Z0-9_./-]+$'
+    Description: NAME of the SSM SecureString holding the master password (the value never passes through the template)
+  WebRoleName:
+    Type: String
+    Default: novatrix-web-ec2-role
+    Description: The web server's instance role (layer 3) - the only principal EFS lets mount
+
+Resources:
+  # ===========================================================================
+  # Database: RDS MariaDB in the private data tier.
+  # ===========================================================================
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub "${ProjectName}-db-subnets"
+      DBSubnetGroupDescription: Private subnets data-a + data-b (no internet route)
+      SubnetIds:
+        - Fn::ImportValue: !Sub "${ProjectName}-DataSubnetAId"
+        - Fn::ImportValue: !Sub "${ProjectName}-DataSubnetBId"
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # Choices (cost first, see the documentation):
+  #   db.t4g.micro, 20 GiB gp2, Single-AZ  - all inside the free tier / Free plan
+  #   same AZ as the web server            - no cross-AZ data transfer charges
+  #   PubliclyAccessible false             - no public IP, and the subnet has no
+  #                                          internet route anyway
+  #   StorageEncrypted (aws/rds key)       - encryption at rest, free
+  #   BackupRetentionPeriod 1              - automated backups + point-in-time
+  #                                          restore for the last day (Free plan max)
+  # The master password is never in this file or on the command line:
+  # CloudFormation reads it from SSM Parameter Store (dynamic reference).
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete          # lab: cleanup removes everything (default would leave a paid snapshot)
+    UpdateReplacePolicy: Snapshot   # but never lose data if a change forces a replacement
+    Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-db"
+      Engine: mariadb
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp2
+      StorageEncrypted: true
+      MultiAZ: false
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub "${ProjectName}-DbSgId"
+      PubliclyAccessible: false
+      Port:
+        Fn::ImportValue: !Sub "${ProjectName}-DbPort"
+      DBName: !Ref DbName
+      MasterUsername: !Ref DbMasterUsername
+      MasterUserPassword: !Sub "{{resolve:ssm-secure:${DbMasterPasswordParam}}}"
+      BackupRetentionPeriod: !Ref DbBackupRetentionDays
+      PreferredBackupWindow: "01:00-01:30"              # UTC, after the S3 backup at 00:00
+      PreferredMaintenanceWindow: "sun:02:00-sun:02:30"
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      DeleteAutomatedBackups: true
+      DeletionProtection: false
+      EnablePerformanceInsights: false
+      MonitoringInterval: 0
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-db" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Shared storage: EFS for the WordPress files. Every web server mounts the
+  # same file system, so a second server in web-b serves the same site - and a
+  # replaced web server (new AMI, new launch template) loses nothing.
+  #
+  # Three locks besides the network:
+  #   1. file system policy: only encrypted (TLS) connections, only the web
+  #      server's role, only through an access point
+  #   2. access point: every client is forced to uid/gid 48 (apache) in
+  #      /wordpress - not even root on the server can act as root on EFS
+  #   3. encryption at rest (aws/elasticfilesystem key)
+  # ===========================================================================
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting       # no charge per GB read/written (elastic charges per GB)
+      BackupPolicy: { Status: DISABLED }   # AWS Backup costs extra; wp-content goes to S3 backup/ daily
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OnlyEncryptedTransport
+            Effect: Deny
+            Principal: { AWS: "*" }
+            Action: "*"
+            Condition:
+              Bool: { "aws:SecureTransport": "false" }
+          - Sid: OnlyWebRoleViaAccessPoint
+            Effect: Allow
+            Principal: { AWS: "*" }
+            Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+            Condition:
+              ArnEquals: { "aws:PrincipalArn": !Sub "arn:aws:iam::${AWS::AccountId}:role/${WebRoleName}" }
+              StringLike: { "elasticfilesystem:AccessPointArn": !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point/*" }
+      FileSystemTags:
+        - { Key: Name, Value: !Sub "${ProjectName}-wordpress-efs" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  WordpressAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser: { Uid: "48", Gid: "48" }          # apache on Amazon Linux 2023
+      RootDirectory:
+        Path: /wordpress
+        CreationInfo: { OwnerUid: "48", OwnerGid: "48", Permissions: "0755" }
+      AccessPointTags:
+        - { Key: Name, Value: !Sub "${ProjectName}-wordpress-ap" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # Mount targets in the PRIVATE data subnets, one per AZ (the web server uses
+  # the one in its own AZ: no cross-AZ traffic).
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId:
+        Fn::ImportValue: !Sub "${ProjectName}-DataSubnetAId"
+      SecurityGroups:
+        - Fn::ImportValue: !Sub "${ProjectName}-EfsSgId"
+  EfsMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId:
+        Fn::ImportValue: !Sub "${ProjectName}-DataSubnetBId"
+      SecurityGroups:
+        - Fn::ImportValue: !Sub "${ProjectName}-EfsSgId"
+
+Outputs:
+  DbInstanceId:
+    Value: !Ref Database
+  DbEndpoint:
+    Value: !GetAtt Database.Endpoint.Address
+    Export: { Name: !Sub "${ProjectName}-DbEndpoint" }
+  DbSubnetGroupName:
+    Value: !Ref DbSubnetGroup
+  FileSystemId:
+    Value: !Ref FileSystem
+    Export: { Name: !Sub "${ProjectName}-FileSystemId" }
+  FileSystemArn:
+    Value: !GetAtt FileSystem.Arn
+    Export: { Name: !Sub "${ProjectName}-FileSystemArn" }
+  AccessPointId:
+    Value: !Ref WordpressAccessPoint
+    Export: { Name: !Sub "${ProjectName}-AccessPointId" }
+  AccessPointArn:
+    Value: !GetAtt WordpressAccessPoint.Arn
+    Export: { Name: !Sub "${ProjectName}-AccessPointArn" }
+  EfsMountTargetAId:
+    Value: !Ref EfsMountTargetA
