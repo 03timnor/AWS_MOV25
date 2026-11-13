@@ -9,7 +9,7 @@
 #   templates/V46_04-storage.yaml   S3 bucket (policy, lifecycle, trigger) + publisher Lambda
 #   templates/V46_05-compute.yaml   launch templates, web server (WordPress), bastion
 #
-# Each layer exports its ids (<namn>-<Key>) and the next layer imports them.
+# Each layer exports its ids (<project>-<Key>) and the next layer imports them.
 # Everything that varies (IP, names, sizes, CIDRs) is a parameter, set in
 # V46_config.sh. Only two things are deliberately NOT in CloudFormation:
 #   - the secrets (CloudFormation can't create SSM SecureStrings, and a password
