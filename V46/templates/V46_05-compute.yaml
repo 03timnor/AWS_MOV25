@@ -17,7 +17,7 @@ Metadata:
 Parameters:
   ProjectName:
     Type: String
-    Default: TEST
+    Default: novatrix
     AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
   AmiId:
     # A plain image id, NOT the SSM path: the deploy script resolves the latest
