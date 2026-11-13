@@ -3599,11 +3599,15 @@ Commit-meddelanden kan beskriva varför en ändring gjordes.
 
 ![alt text](pictures/ssh.png)
 
-### *__Versionshistorik:__*
+### *__Versionshistorik exempel:__*
 
 ![alt text](pictures/version_history.png)
 
-![alt text](version_history_2.png)
+![alt text](pictures/version_history_2.png)
+
+![alt text](pictures/version_history_3.png)
+
+![alt text](pictures/version_history_4.png)
 
 ### *__Verifiering OK:__*
 
