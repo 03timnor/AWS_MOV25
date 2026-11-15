@@ -2,7 +2,7 @@
 
 Repository: https://github.com/03timnor/AWS_MOV25
 
-*Tim Noreliusson Lingestedt, 2026-11-13*
+*Tim Noreliusson Lingestedt, 2026-11-15*
 
 Veckans uppgift är att bygga det som gjorts de tidigare veckorna med *CloudFormation* mallar (kod), versionshanterat i *GitHub*. Infrastrukturen / miljön skall kunna återskapas utan manuellt klickande.
 
