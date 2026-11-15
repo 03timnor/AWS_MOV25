@@ -6,7 +6,7 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 Veckans uppgift är att bygga det som gjorts de tidigare veckorna med *CloudFormation* mallar (kod), versionshanterat i *GitHub*. Infrastrukturen / miljön skall kunna återskapas utan manuellt klickande.
 
-För Väl Godkänt hela infrastrukturen / miljön kunna skapas med kod och kunna återskapas från kod.
+För Väl Godkänt ska hela infrastrukturen / miljön kunna skapas med kod och kunna återskapas från kod.
 
 ## *__1. Skapa infrastrukturen / miljön med CloudFormation mallar (Kod)__*
 
