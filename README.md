@@ -18,7 +18,7 @@
 - [x] [V45](https://github.com/03timnor/AWS_MOV25/tree/main/V45)
 
 ## *__V46 - IaC med CloudFormation__*
-- [ ] [V46](https://github.com/03timnor/AWS_MOV25/tree/main/V46)
+- [x] [V46](https://github.com/03timnor/AWS_MOV25/tree/main/V46)
 
 ## *__V47 - Skalbarhet och tillgänglighet__*
 - [ ] [V47](https://github.com/03timnor/AWS_MOV25/tree/main/V47)
