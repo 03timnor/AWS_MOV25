@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Novatrix V47 - layer 2 of 5: data. RDS MariaDB, EFS (shared WordPress
+  files for every web server in both AZs) and the passwords in AWS Secrets
+  Manager. Imports subnets and security groups from layer 1.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: novatrix
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+    Description: Same prefix as the network layer (its exports are imported)
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedValues: [db.t4g.micro, db.t3.micro]
+    Description: Free tier / Free plan classes only - a typo can't create an expensive database
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 20
+    Description: GiB of gp2 storage (20 = free tier allowance and RDS minimum)
+  DbBackupRetentionDays:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 1
+    Description: Days of automated RDS backups (Free plan allows at most 1)
+  DbName:
+    Type: String
+    Default: wordpress
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]{0,63}$'
+  DbMasterUsername:
+    Type: String
+    Default: novatrixadmin
+    NoEcho: true
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]{0,15}$'
+  DbMultiAz:
+    Type: String
+    Default: "false"
+    AllowedValues: ["false", "true"]
+    Description: true = synchronous standby in the second AZ (automatic failover, about double the DB cost)
+  DbAppSecretName:
+    Type: String
+    Default: novatrix/db/wordpress-password
+    AllowedPattern: '^[a-zA-Z0-9_./+=@-]+$'
+    Description: Secrets Manager name for the WordPress database user's password
+  WpAdminSecretName:
+    Type: String
+    Default: novatrix/wordpress/admin-password
+    AllowedPattern: '^[a-zA-Z0-9_./+=@-]+$'
+    Description: Secrets Manager name for the WordPress admin password
+  WebRoleName:
+    Type: String
+    Default: novatrix-web-ec2-role
+    Description: The web server's instance role (layer 3) - the only principal EFS lets mount
+
+Conditions:
+  MultiAz: !Equals [!Ref DbMultiAz, "true"]
+
+Resources:
+  # ===========================================================================
+  # Secrets (AWS Secrets Manager, encrypted with the AWS managed key
+  # aws/secretsmanager). CloudFormation GENERATES the passwords itself, so no
+  # password is ever typed, passed on a command line or stored in Git. Only
+  # letters and digits: safe in SQL, PHP and shell strings.
+  # The RDS master password is not here: RDS creates and rotates that secret
+  # itself (ManageMasterUserPassword below).
+  # When the stack is deleted CloudFormation deletes them without the usual
+  # 7-30 day recovery window, so the same names can be created again at once
+  # (the cleanup script force-deletes them too, just in case).
+  # ===========================================================================
+  DbAppSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Ref DbAppSecretName
+      Description: !Sub "${ProjectName} - password of the WordPress database user (ONLY the WordPress database)"
+      GenerateSecretString: { PasswordLength: 32, ExcludePunctuation: true }
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  WpAdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Ref WpAdminSecretName
+      Description: !Sub "${ProjectName} - WordPress admin password (user in the compute layer)"
+      GenerateSecretString: { PasswordLength: 32, ExcludePunctuation: true }
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Database: RDS MariaDB in the private data tier.
+  # ===========================================================================
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub "${ProjectName}-db-subnets"
+      DBSubnetGroupDescription: Private subnets data-a + data-b (no internet route)
+      SubnetIds:
+        - Fn::ImportValue: !Sub "${ProjectName}-DataSubnetAId"
+        - Fn::ImportValue: !Sub "${ProjectName}-DataSubnetBId"
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # Choices (cost first, see the documentation):
+  #   db.t4g.micro, 20 GiB gp2, Single-AZ  - all inside the free tier / Free plan
+  #                                          (DbMultiAz=true adds a standby in AZ b:
+  #                                          the web tier is multi-AZ either way)
+  #   AZ a                                 - web servers in AZ b reach it across AZs
+  #                                          (cents per GB, see the cost estimate)
+  #   PubliclyAccessible false             - no public IP, and the subnet has no
+  #                                          internet route anyway
+  #   StorageEncrypted (aws/rds key)       - encryption at rest, free
+  #   BackupRetentionPeriod 1              - automated backups + point-in-time
+  #                                          restore for the last day (Free plan max)
+  #   ManageMasterUserPassword             - RDS generates the master password,
+  #                                          stores it in Secrets Manager and
+  #                                          rotates it every 7 days. Nobody ever
+  #                                          sees it; the web servers read it only
+  #                                          to create/update the WordPress user.
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete          # lab: cleanup removes everything (default would leave a paid snapshot)
+    UpdateReplacePolicy: Snapshot   # but never lose data if a change forces a replacement
+    Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-db"
+      Engine: mariadb
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp2
+      StorageEncrypted: true
+      MultiAZ: !If [MultiAz, true, false]
+      AvailabilityZone: !If [MultiAz, !Ref AWS::NoValue, !Select [0, !GetAZs ""]]
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub "${ProjectName}-DbSgId"
+      PubliclyAccessible: false
+      Port:
+        Fn::ImportValue: !Sub "${ProjectName}-DbPort"
+      DBName: !Ref DbName
+      MasterUsername: !Ref DbMasterUsername
+      ManageMasterUserPassword: true
+      BackupRetentionPeriod: !Ref DbBackupRetentionDays
+      PreferredBackupWindow: "01:00-01:30"              # UTC, after the S3 backup at 00:00
+      PreferredMaintenanceWindow: "sun:02:00-sun:02:30"
+      AutoMinorVersionUpgrade: true
+      CopyTagsToSnapshot: true
+      DeleteAutomatedBackups: true
+      DeletionProtection: false
+      EnablePerformanceInsights: false
+      MonitoringInterval: 0
+      Tags:
+        - { Key: Name, Value: !Sub "${ProjectName}-db" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Shared storage: EFS for the WordPress files. Every web server mounts the
+  # same file system (through the mount target in its own AZ), so all servers
+  # in the Auto Scaling group serve the same site - and a replaced or newly
+  # scaled-out server (new AMI, new launch template) loses nothing.
+  #
+  # Three locks besides the network:
+  #   1. file system policy: only encrypted (TLS) connections, only the web
+  #      server's role, only through an access point
+  #   2. access point: every client is forced to uid/gid 48 (apache) in
+  #      /wordpress - not even root on the server can act as root on EFS
+  #   3. encryption at rest (aws/elasticfilesystem key)
+  # ===========================================================================
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting       # no charge per GB read/written (elastic charges per GB)
+      BackupPolicy: { Status: DISABLED }   # AWS Backup costs extra; wp-content goes to S3 backup/ daily
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OnlyEncryptedTransport
+            Effect: Deny
+            Principal: { AWS: "*" }
+            Action: "*"
+            Condition:
+              Bool: { "aws:SecureTransport": "false" }
+          - Sid: OnlyWebRoleViaAccessPoint
+            Effect: Allow
+            Principal: { AWS: "*" }
+            Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+            Condition:
+              ArnEquals: { "aws:PrincipalArn": !Sub "arn:aws:iam::${AWS::AccountId}:role/${WebRoleName}" }
+              StringLike: { "elasticfilesystem:AccessPointArn": !Sub "arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point/*" }
+      FileSystemTags:
+        - { Key: Name, Value: !Sub "${ProjectName}-wordpress-efs" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  WordpressAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref FileSystem
+      PosixUser: { Uid: "48", Gid: "48" }          # apache on Amazon Linux 2023
+      RootDirectory:
+        Path: /wordpress
+        CreationInfo: { OwnerUid: "48", OwnerGid: "48", Permissions: "0755" }
+      AccessPointTags:
+        - { Key: Name, Value: !Sub "${ProjectName}-wordpress-ap" }
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # Mount targets in the PRIVATE data subnets, one per AZ (the web server uses
+  # the one in its own AZ: no cross-AZ traffic).
+  EfsMountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId:
+        Fn::ImportValue: !Sub "${ProjectName}-DataSubnetAId"
+      SecurityGroups:
+        - Fn::ImportValue: !Sub "${ProjectName}-EfsSgId"
+  EfsMountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId:
+        Fn::ImportValue: !Sub "${ProjectName}-DataSubnetBId"
+      SecurityGroups:
+        - Fn::ImportValue: !Sub "${ProjectName}-EfsSgId"
+
+Outputs:
+  DbInstanceId:
+    Value: !Ref Database
+  DbEndpoint:
+    Value: !GetAtt Database.Endpoint.Address
+    Export: { Name: !Sub "${ProjectName}-DbEndpoint" }
+  DbSubnetGroupName:
+    Value: !Ref DbSubnetGroup
+  FileSystemId:
+    Value: !Ref FileSystem
+    Export: { Name: !Sub "${ProjectName}-FileSystemId" }
+  FileSystemArn:
+    Value: !GetAtt FileSystem.Arn
+    Export: { Name: !Sub "${ProjectName}-FileSystemArn" }
+  AccessPointId:
+    Value: !Ref WordpressAccessPoint
+    Export: { Name: !Sub "${ProjectName}-AccessPointId" }
+  AccessPointArn:
+    Value: !GetAtt WordpressAccessPoint.Arn
+    Export: { Name: !Sub "${ProjectName}-AccessPointArn" }
+  EfsMountTargetAId:
+    Value: !Ref EfsMountTargetA
+  DbMasterSecretArn:
+    Description: Secret managed by RDS (JSON with username + password)
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+    Export: { Name: !Sub "${ProjectName}-DbMasterSecretArn" }
+  DbAppSecretArn:
+    Value: !Ref DbAppSecret
+    Export: { Name: !Sub "${ProjectName}-DbAppSecretArn" }
+  WpAdminSecretArn:
+    Value: !Ref WpAdminSecret
+    Export: { Name: !Sub "${ProjectName}-WpAdminSecretArn" }
