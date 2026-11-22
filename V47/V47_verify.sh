@@ -1050,16 +1050,23 @@ fi
 # =============================================================================
 # Del 8 (opt-in): failure and load, measured from the outside
 # =============================================================================
-# A poller asks the site for the start page twice a second through the ALB and
-# writes "<epoch> <http-code>" per request: the proof of what a visitor saw.
+# A poller asks the site for the start page through the ALB about every 1.5 s
+# and writes "<epoch> <http-code>" per request: the proof of what a visitor saw.
+# Slow on purpose: the poller is itself traffic, and with a scaling target of
+# 60 requests per server and minute a faster poller would make the group scale
+# out in the middle of the test. Timeout 10 s: a slow page is not an outage.
 POLL="$WORK_DIR/poll.txt"
 POLL_STOP="$WORK_DIR/poll.stop"
 POLL_PID=""
+POLL_MAX_GAP=30   # "the site stayed up" = never 30 s without a successful page.
+                  # A hard-killed server keeps getting requests until the health
+                  # check notices (3 x 15 s = 45 s) - the other server answers
+                  # meanwhile, so the longest gap stays far below that.
 poll_start() {
   : > "$POLL"; rm -f -- "${POLL_STOP:?}"
   ( while [[ ! -f "$POLL_STOP" ]]; do
-      printf '%s %s\n' "$(date +%s)" "$(curl -s -m 4 -o /dev/null -w '%{http_code}' "$SITE/")" >> "$POLL"
-      sleep 0.5
+      printf '%s %s\n' "$(date +%s)" "$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$SITE/")" >> "$POLL"
+      sleep 1.5
     done ) &
   POLL_PID=$!
 }
@@ -1073,16 +1080,67 @@ poll_report() {   # description-prefix
   local n ok err gap
   read -r n ok err gap <<<"$(poll_stats)"
   echo "    Besökarens bild: $n anrop, $ok OK (200), $err fel, längsta tid utan lyckat svar ${gap}s"
-  echo "    Felkoder: $(awk '$2 != 200 { c[$2]++ } END { for (k in c) printf "%s x%d  ", k, c[k] }' "$POLL")"
-  [[ "$n" -gt 0 && "$gap" -le 10 ]] && got=ALLOW || got=DENY
-  record ALLOW "$got" "$1: sajten svarade hela tiden (längsta lucka ${gap}s, $(( ok * 100 / (n > 0 ? n : 1) ))% OK)"
+  echo "    Felkoder: $(awk '$2 != 200 { c[$2]++ } END { for (k in c) printf "%s x%d  ", k, c[k] }' "$POLL")(000 = inget svar inom 10 s)"
+  [[ "$n" -gt 0 && "$gap" -lt "$POLL_MAX_GAP" ]] && got=ALLOW || got=DENY
+  record ALLOW "$got" "$1: sajten svarade hela tiden (längsta lucka ${gap}s < ${POLL_MAX_GAP}s, $(( ok * 100 / (n > 0 ? n : 1) ))% OK)"
 }
-target_state() {  # instance -> healthy | unhealthy | draining | gone ...
+target_state() {  # instance -> healthy | unhealthy | initial | draining | gone ...
   local st
   st=$(aws elbv2 describe-target-health --region "$REGION" --target-group-arn "$TG_ARN" --targets Id="$1" \
          --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text 2>/dev/null)
   [[ -z "$st" || "$st" == None ]] && st=gone
   echo "$st"
+}
+# InService servers with launch time: "id az private-ip launch-time"
+web_instances_lt() {
+  local ids
+  ids=$(asg_field 'Instances[?LifecycleState==`InService`].InstanceId')
+  [[ -z "$ids" || "$ids" == None ]] && return 0
+  aws ec2 describe-instances --region "$REGION" --instance-ids $ids \
+    --query 'Reservations[].Instances[].[InstanceId, Placement.AvailabilityZone, PrivateIpAddress, LaunchTime]' \
+    --output text 2>/dev/null
+}
+# A victim for a test: healthy in the ALB and - with "old" - past the group's
+# health check grace period. A server that is still booting is useless as a
+# victim: its user data starts Apache again, and during the grace period the
+# group ignores the load balancer's verdict anyway.
+pick_victim() {   # any|old preferred-az -> "id az private-ip" (empty if none)
+  local grace now best="" id az priv lt
+  grace=$(asg_field HealthCheckGracePeriod); now=$(date +%s)
+  while read -r id az priv lt; do
+    [[ -z "${id:-}" ]] && continue
+    [[ "$(target_state "$id")" == healthy ]] || continue
+    if [[ "$1" == old ]]; then
+      (( now - $(date -d "$lt" +%s) > ${grace:-600} + 30 )) || continue
+    fi
+    if [[ -z "$best" || "$az" == "$2" ]]; then best="$id $az $priv"; fi
+    [[ "$az" == "$2" ]] && break
+  done <<<"$(web_instances_lt)"
+  echo "$best"
+}
+# Before every test: the group must be at rest (desired = InService = healthy)
+# and - when a victim is wanted - have one. Earlier tests leave the group in
+# motion (replacements booting, scale-in), which must not count against the next.
+wait_stable() {   # none|any|old preferred-az -> sets VICTIM_ID VICTIM_AZ VICTIM_IP; status 0/1
+  local t0=$SECONDS last=-60 d i h v
+  VICTIM_ID=""; VICTIM_AZ=""; VICTIM_IP=""
+  while (( SECONDS - t0 < 900 )); do
+    d=$(asg_field DesiredCapacity); i=$(asg_field "length(Instances[?LifecycleState=='InService'])"); h=$(healthy_count)
+    if [[ "${i:-0}" == "${d:-x}" && "${h:-0}" -ge "${d:-99}" ]]; then
+      [[ "$1" == none ]] && { echo "    gruppen i vila: $d servrar, alla friska"; return 0; }
+      v=$(pick_victim "$1" "$2")
+      if [[ -n "$v" ]]; then
+        read -r VICTIM_ID VICTIM_AZ VICTIM_IP <<<"$v"
+        echo "    gruppen i vila: $d servrar, alla friska"; return 0
+      fi
+    fi
+    if (( SECONDS - last >= 60 )); then
+      last=$SECONDS
+      echo "    väntar på att gruppen ska bli stabil ($(( SECONDS - t0 ))s): önskat $d, i tjänst $i, friska $h$( [[ "$1" == old ]] && echo ", och en server äldre än grace-perioden")"
+    fi
+    sleep 15
+  done
+  echo "    gruppen blev inte stabil inom 15 min - testet hoppas över"; return 1
 }
 # Wait until <id> has left the group AND <desired> servers are InService + healthy.
 wait_recovered() {   # old-instance-id timeout-seconds -> echo seconds taken, status 0/1
@@ -1103,14 +1161,6 @@ wait_recovered() {   # old-instance-id timeout-seconds -> echo seconds taken, st
   done
   echo $(( SECONDS - t0 )); return 1
 }
-refresh_web() {
-  WEB_ID=""; WEB_AZ=""; WEB_PRIV=""; WEB2_ID=""; WEB2_AZ=""; WEB2_PRIV=""
-  while read -r id az priv pub; do
-    [[ -z "${id:-}" ]] && continue
-    if [[ -z "$WEB_ID" ]]; then WEB_ID=$id; WEB_AZ=$az; WEB_PRIV=$priv
-    elif [[ -z "$WEB2_ID" && "$az" != "$WEB_AZ" ]]; then WEB2_ID=$id; WEB2_AZ=$az; WEB2_PRIV=$priv; fi
-  done <<<"$(web_instances)"
-}
 show_activities() {
   aws autoscaling describe-scaling-activities --region "$REGION" --auto-scaling-group-name "$ASG" --no-paginate --max-records "$1" \
     --query 'Activities[].[StartTime, Description]' --output text 2>/dev/null | cut -c1-140 | sed 's/^/    /'
@@ -1125,30 +1175,30 @@ fi
 
 if [[ "$DO_FAILOVER" == yes ]]; then
   echo; echo "=== Del 8.1: en webbserver försvinner (EC2 terminerar den hårt, under trafik) ==="
-  refresh_web
-  victim=$WEB_ID
-  echo "Offer: $victim i $WEB_AZ - termineras direkt i EC2 (inte via gruppen: ingen förvarning, ingen dränering)"
-  poll_start; sleep 10
-  aws ec2 terminate-instances --region "$REGION" --instance-ids "$victim" >/dev/null
-  t0=$SECONDS
-  while [[ "$(target_state "$victim")" == healthy ]] && (( SECONDS - t0 < 180 )); do sleep 3; done
-  echo "    lastbalanseraren tog servern ur rotation efter $(( SECONDS - t0 ))s ($(target_state "$victim"))"
-  if secs=$(wait_recovered "$victim" 900); then got=ALLOW; else got=DENY; fi
-  record ALLOW "$got" "gruppen ersatte servern automatiskt (tillbaka till fullt antal friska efter ${secs}s)"
-  sleep 20; poll_stop
-  poll_report "server terminerad"
-  echo "    Nu i tjänst: $(web_instances | awk '{printf "%s (%s)  ", $1, $2}')"
-  show_activities 2
+  if wait_stable any "${REGION}a"; then
+    victim=$VICTIM_ID
+    echo "Offer: $victim i $VICTIM_AZ - termineras direkt i EC2 (inte via gruppen: ingen förvarning, ingen dränering)"
+    poll_start; sleep 10
+    aws ec2 terminate-instances --region "$REGION" --instance-ids "$victim" >/dev/null
+    t0=$SECONDS
+    while [[ "$(target_state "$victim")" == healthy ]] && (( SECONDS - t0 < 180 )); do sleep 3; done
+    echo "    lastbalanseraren tog servern ur rotation efter $(( SECONDS - t0 ))s ($(target_state "$victim"))"
+    if secs=$(wait_recovered "$victim" 900); then got=ALLOW; else got=DENY; fi
+    record ALLOW "$got" "gruppen ersatte servern automatiskt (tillbaka till fullt antal friska efter ${secs}s)"
+    sleep 20; poll_stop
+    poll_report "server terminerad"
+    echo "    Nu i tjänst: $(web_instances | awk '{printf "%s (%s)  ", $1, $2}')"
+    show_activities 2
+  fi
 fi
 
 if [[ "$DO_SELFHEAL" == yes ]]; then
   echo; echo "=== Del 8.2: en webbserver går sönder (Apache stoppas) - hälsokontroll + självläkning ==="
-  refresh_web
-  victim=${WEB2_ID:-$WEB_ID}; victim_ip=${WEB2_PRIV:-$WEB_PRIV}
-  if [[ -z "$victim" || -z "$BASTION_IP" || ! -f "$KEY_FILE" ]]; then
-    echo "Hoppar över (behöver en webbserver och SSH via bastionen)."
-  else
-    echo "Offer: $victim ($victim_ip) - instansen kör vidare, men webbservern svarar inte"
+  if [[ -z "$BASTION_IP" || ! -f "$KEY_FILE" ]]; then
+    echo "Hoppar över (behöver SSH via bastionen)."
+  elif wait_stable old "${REGION}b"; then
+    victim=$VICTIM_ID; victim_ip=$VICTIM_IP
+    echo "Offer: $victim ($victim_ip, $VICTIM_AZ) - instansen kör vidare, men webbservern svarar inte"
     poll_start; sleep 10
     remote_on "$victim_ip" "sudo systemctl stop httpd" >/dev/null
     t0=$SECONDS
@@ -1181,7 +1231,8 @@ if [[ "$DO_LOAD" == yes ]]; then
   (( LOAD_WORKERS <= 30 && LOAD_MINUTES <= 15 )) || { echo "LOAD_WORKERS max 30, LOAD_MINUTES max 15"; exit 2; }
   echo "Mål: $SITE/  = $ALB_NAME i konto $ACCOUNT_ID ($REGION) - bara GET mot startsidan, ingen annan adress."
   echo; echo "=== Del 8.3: lasttest - $LOAD_WORKERS parallella besökare i $LOAD_MINUTES minuter mot $SITE/ ==="
-  start_desired=$(asg_field DesiredCapacity); max_desired=$start_desired
+  wait_stable none ""
+  start_desired=$(asg_field DesiredCapacity); max_desired=$start_desired; low=$start_desired; scaled=no
   echo "Före: önskat $start_desired servrar. Målvärden: $REQUESTS_PER_TARGET anrop/server/minut och ${CPU_TARGET}% CPU."
   end=$(( $(date +%s) + LOAD_MINUTES * 60 ))
   WORKERS=()
@@ -1193,17 +1244,21 @@ if [[ "$DO_LOAD" == yes ]]; then
   while (( SECONDS - t0 < LOAD_MINUTES * 60 + 360 )); do
     d=$(asg_field DesiredCapacity); i=$(asg_field "length(Instances[?LifecycleState=='InService'])")
     [[ "${d:-0}" -gt "$max_desired" ]] && max_desired=$d
+    # Judged against the LOWEST capacity seen: a scale-in left over from an
+    # earlier test may still happen at the start - growth after it is what counts.
+    [[ "${d:-0}" -lt "$low" ]] && low=$d
+    [[ "${d:-0}" -gt "$low" ]] && scaled=yes
     (( $(date +%s) < end )) && phase="last " || phase="efter"
     echo "    $(( (SECONDS - t0) / 60 )) min ($phase): önskat $d, i tjänst $i, friska i ALB $(healthy_count)"
-    (( max_desired > start_desired && $(date +%s) >= end && ${i:-0} >= max_desired )) && break
+    [[ "$scaled" == yes ]] && (( $(date +%s) >= end && ${i:-0} >= max_desired )) && break
     sleep 30
   done
   wait "${WORKERS[@]}" 2>/dev/null
-  [[ "$max_desired" -gt "$start_desired" ]] && got=ALLOW || got=DENY
-  record ALLOW "$got" "gruppen skalade ut under last ($start_desired -> $max_desired servrar, max $(asg_field MaxSize))"
+  [[ "$scaled" == yes ]] && got=ALLOW || got=DENY
+  record ALLOW "$got" "gruppen skalade ut under last ($low -> $max_desired servrar, max $(asg_field MaxSize))"
   show_activities 3
   echo "INFO target tracking skalar in först efter ~15 min låg last (avsiktligt försiktigt) - kör"
-  echo "     ./V47_verify.sh om en halvtimme och se att gruppen är tillbaka på $start_desired servrar (7.2)."
+  echo "     ./V47_verify.sh om en halvtimme och se att gruppen är tillbaka på $(asg_field MinSize) servrar (7.2)."
 fi
 
 echo
