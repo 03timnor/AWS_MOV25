@@ -4307,6 +4307,108 @@ echo "Done. Recreate everything from the repo with: ./V47_novatrix.sh"
 
 ## *__2. Dokumentation__*
 
+### *__Stackar (CloudFormation, deployas i ordning)__*
+
+| Lager | Stack | Mall | Innehåll |
+|---|---|---|---|
+| 1 | `novatrix-network` | `templates/V47_01-network.yaml` | VPC, 5 subnät, route tables, internet gateway, S3 gateway endpoint, security groups, NACL:er, VPC flow logs |
+| 2 | `novatrix-data` | `templates/V47_02-data.yaml` | RDS MariaDB, EFS (+ access point, mount targets i 2 AZ), lösenord i Secrets Manager |
+| 3 | `novatrix-security` | `templates/V47_03-security.yaml` | IAM: tjänsteroller, instansprofil, grupper, policyer, användare |
+| 4 | `novatrix-storage` | `templates/V47_04-storage.yaml` | S3-bucket (policy, livscykel, trigger) + publicerings-Lambda |
+| 5 | `novatrix-compute` | `templates/V47_05-compute.yaml` | Launch template, Application Load Balancer, target group, Auto Scaling-grupp, skalningspolicyer, bastion |
+
+### *__Script__*
+
+| Fil | Syfte |
+|---|---|
+| `V47_config.sh` | Alla inställningar (namn, CIDR, storlekar, skalningsgränser) – läses av de andra scripten |
+| `V47_novatrix.sh` | Bygger/uppdaterar hela miljön (`--plan` visar ändringar utan att ändra) |
+| `V47_verify.sh` | Verifierar allt (Del 0–7), `--all` även failover, självläkning och lasttest (Del 8) |
+| `V47_cleanup.sh` | Tar bort allt i omvänd ordning, inklusive hemligheter och certifikat |
+
+### *__Nätverk (eu-north-1)__*
+
+| Subnät | CIDR | AZ | Typ | Innehåll |
+|---|---|---|---|---|
+| mgmt-a | 10.0.0.0/24 | eu-north-1a | Publikt | Bastion (enda SSH-ingången) |
+| web-a | 10.0.2.0/24 | eu-north-1a | Publikt | ALB-nod + webbservrar |
+| web-b | 10.0.3.0/24 | eu-north-1b | Publikt | ALB-nod + webbservrar |
+| data-a | 10.0.10.0/24 | eu-north-1a | Privat (ingen väg till internet) | RDS + EFS mount target |
+| data-b | 10.0.11.0/24 | eu-north-1b | Privat (ingen väg till internet) | EFS mount target |
+
+VPC: `10.0.0.0/16`. Webbnivån `10.0.2.0/23` och datanivån `10.0.10.0/23` gör att en NACL-regel täcker båda subnäten i en nivå.
+
+### *__Security groups__*
+
+| Grupp | In | Ut |
+|---|---|---|
+| `alb-sg` | 80, 443 från internet | 80 till `web-sg` |
+| `web-sg` | 80 från `alb-sg`, 22 från `bastion-sg` | 443 till internet, 3306 till `db-sg`, 2049 till `efs-sg` |
+| `bastion-sg` | 22 från admin-IP (/32) | 22 till `web-sg` |
+| `db-sg` | 3306 från `web-sg` | Ingenting |
+| `efs-sg` | 2049 från `web-sg` | Ingenting |
+
+### *__Hög tillgänglighet och skalning__*
+
+| Del | Inställning | Varför |
+|---|---|---|
+| Application Load Balancer | Internet-facing, noder i 2 AZ, HTTP 80 + HTTPS 443 (TLS 1.2/1.3) | Enda publika ingången; sprider trafiken över AZ:erna |
+| Hälsokontroll | `GET /healthz.php` var 15 sekund, frisk efter 2 OK, ur rotation efter 3 fel | Kontrollerar PHP + EFS, inte databasen (ett DB-avbrott löses inte av att byta servrar) |
+| Auto Scaling-grupp | min 2, max 4, web-a + web-b, health check type ELB | En server per AZ; trasiga servrar byts ut automatiskt |
+| Skalningspolicy 1 | Target tracking: CPU 50 % | Tunga sidor |
+| Skalningspolicy 2 | Target tracking: 60 ALB-anrop per server och minut | ~60 % av uppmätt kapacitet (~100/min per server) |
+| Utrullning | Rolling update, 1 server i taget, minst 2 i tjänst | Ny AMI/user data utan driftstopp; misslyckad version rullas tillbaka |
+| Launch template | t3.micro, Amazon Linux 2023, IMDSv2, krypterad gp3-disk | Alla servrar startas identiskt |
+
+### *__Data och lagring__*
+
+| Tjänst | Konfiguration |
+|---|---|
+| RDS | MariaDB, db.t4g.micro, 20 GiB gp2, krypterad, Single-AZ (Multi-AZ valbart), TLS krävs, 1 dags automatisk backup |
+| EFS | Delade WordPress-filer för alla servrar, krypterad i vila och transit, access point (uid/gid 48), mount target i varje AZ |
+| S3 | En privat bucket: `drafts/`, `web/`, `logs/` (30 dagar), `backup/` (14 dagar) |
+| Backup | Daglig databasdump + wp-content till S3 – en server per dygn för hela gruppen |
+
+### *__Hemligheter (Secrets Manager)__*
+
+| Hemlighet | Skapas av | Används till |
+|---|---|---|
+| `rds!db-…` (masterlösenord) | RDS (`ManageMasterUserPassword`), roteras var 7:e dag | Skapa/uppdatera WordPress-användaren i databasen |
+| `novatrix/db/wordpress-password` | CloudFormation (genererat, 32 tecken) | WordPress databasanvändare |
+| `novatrix/wordpress/admin-password` | CloudFormation (genererat, 32 tecken) | WordPress admin-inloggning |
+
+Inga lösenord finns i mallar, skript eller Git.
+
+### *__IAM__*
+
+| Användare / roll | Får | Får inte |
+|---|---|---|
+| `anna.ops` (drift) | Se all drift, starta/stoppa servrar, ändra antal webbservrar inom min/max, hämta backuper | Ändra min/max, nätverk, databas, hemligheter, stackar |
+| `erik.dev` (utveckling) | Ladda upp utkast, läsa publicerad sida, driftsätta Lambda-kod | Publicera förbi Lambdan, läsa backuper/loggar/hemligheter |
+| `maja.marketing` (marknad) | Ladda upp bilder till `drafts/images/` | Radera, ändra sidor |
+| `novatrix-web-ec2-role` | Läsa `web/`, de 3 hemligheterna, montera EFS via access point | Skriva till S3 direkt, läsa backuper |
+| `novatrix-uploader-role` | Skriva till `logs/` och `backup/` (kan bara antas av webbserverrollen) | Läsa eller radera något |
+| `novatrix-publisher-role` | Läsa `drafts/`, skriva `web/`, egen logg | Allt annat |
+
+### *__Hur lösningen svarar på last och fel:__*
+
+#### *__Last:__*
+
+*Auto Scaling*-gruppen har två stycken tracking-policies, 60 anrop per server och minut och 50% *CPU*. Överskrids ett mål i 3 minuter startar nya servrar (max 4). Under låg last tas det bort igen.
+
+#### *__Fel:__*
+
+En *Auto Load Balancer* kontrollerar varje server var 15 sekund (`/healthz.php`). En server som slutar svara tas ur rotation och gruppen ersätter den automatiskt. Under tiden svarar servern i den andra *AZ*:n.
+
+> **OBS – hälsokontrollen kontrollerar inte WordPress.**
+> `/healthz.php` kontrollerar bara Apache, PHP och EFS på den enskilda servern. En WordPress-sida skulle
+> kräva databasen (är RDS nere byts alla servrar ut i onödan) och tar 3–4 s under last (friska servrar
+> skulle underkännas). Databasfel löses inte genom att byta servrar.
+
+> **OBS – `content/` (HTML, CSS, SVG) finns kvar.**
+> Den statiska sidan visar publiceringskedjan från tidigare veckor: Git → S3 → Lambda → `/static/` på
+> varje server. Verifieringen testar den, innehållet finns i repository.
+
 ## *__3. Verifiering__*
 
 ### *__Webbsida fungerar:__*
@@ -4327,7 +4429,7 @@ echo "Done. Recreate everything from the repo with: ./V47_novatrix.sh"
 
 ![alt text](pictures/secrets_manager.png)
 
-### *__Auto scaling groups:__*
+### *__Auto Scaling Groups:__*
 
 ![alt text](pictures/auto_scaling_group_before_1.png)
 
@@ -4335,11 +4437,15 @@ echo "Done. Recreate everything from the repo with: ./V47_novatrix.sh"
 
 ![alt text](pictures/auto_scaling_group_before_3.png)
 
-### *__Target groups:__*
+### *__Target Groups:__*
 
 ![alt text](pictures/target_groups_before.png)
 
-### *__Load balancers:__*
+### *__Health Check:__*
+
+![alt text](pictures/health_check.png)
+
+### *__Load Balancers:__*
 
 ![alt text](pictures/load_balancers.png)
 
