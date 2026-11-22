@@ -543,6 +543,19 @@ Resources:
       RuleAction: allow
       CidrBlock: !Ref DataTierCidr
       PortRange: { From: 2049, To: 2049 }
+  WebNaclOutHttpToWebTier:
+    # The ALB's node in web-a sends requests AND health checks to servers in
+    # web-b (and the other way round): that traffic leaves the subnet on port 80.
+    # Without this rule every ALB node could only reach servers in its own AZ.
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref WebNacl
+      RuleNumber: 140
+      Egress: true
+      Protocol: 6
+      RuleAction: allow
+      CidrBlock: !Ref WebTierCidr
+      PortRange: { From: 80, To: 80 }
   WebNaclAssocA:
     Type: AWS::EC2::SubnetNetworkAclAssociation
     Properties: { SubnetId: !Ref WebSubnetA, NetworkAclId: !Ref WebNacl }
