@@ -61,9 +61,9 @@ Parameters:
     Description: Target tracking - keep the group's average CPU around this
   RequestsPerTargetPerMinute:
     Type: Number
-    Default: 300
+    Default: 60
     MinValue: 10
-    Description: Target tracking - keep ALB requests per server per minute around this
+    Description: Target tracking - keep ALB requests per server per minute around this. Set it BELOW a server's measured capacity (~100/min for t3.micro + WordPress on EFS)
   HealthCheckPath:
     Type: String
     Default: /healthz.php

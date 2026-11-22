@@ -1031,7 +1031,7 @@ else
         --query 'length(MetricAlarms)' --output text 2>/dev/null)
   echo "    CloudWatch-larm som target tracking skapat: ${n:-0} (ett för hög och ett för låg last per policy)"
   echo "Senaste aktiviteterna i gruppen:"
-  aws autoscaling describe-scaling-activities --region "$REGION" --auto-scaling-group-name "$ASG" --max-items 5 \
+  aws autoscaling describe-scaling-activities --region "$REGION" --auto-scaling-group-name "$ASG" --no-paginate --max-records 5 \
     --query 'Activities[].[StartTime, StatusCode, Description]' --output text 2>/dev/null \
     | cut -c1-140 | sed 's/^/    /'
 fi
@@ -1112,7 +1112,7 @@ refresh_web() {
   done <<<"$(web_instances)"
 }
 show_activities() {
-  aws autoscaling describe-scaling-activities --region "$REGION" --auto-scaling-group-name "$ASG" --max-items "$1" \
+  aws autoscaling describe-scaling-activities --region "$REGION" --auto-scaling-group-name "$ASG" --no-paginate --max-records "$1" \
     --query 'Activities[].[StartTime, Description]' --output text 2>/dev/null | cut -c1-140 | sed 's/^/    /'
 }
 # Never leave the poller or load workers running if the script is interrupted.

@@ -125,7 +125,9 @@ ASG_NAME="${PROJECT}-web-asg"
 ASG_MIN=2                                  # one per AZ: the site survives the loss of an AZ
 ASG_MAX=4                                  # cost ceiling - never more than 4 web servers
 CPU_TARGET=50                              # target tracking: average CPU % in the group
-REQUESTS_PER_TARGET=300                    # target tracking: ALB requests per server per minute
+REQUESTS_PER_TARGET=60                     # target tracking: ALB requests per server per minute
+                                           # (~60 % of what one t3.micro served in the V47 load test:
+                                           # ~100/min - the target must be BELOW a server's capacity)
 
 # ----- Load balancer --------------------------------------------------------------
 ALB_NAME="${PROJECT}-alb"
