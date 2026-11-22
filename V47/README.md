@@ -4428,6 +4428,7 @@ Vid utskalning ökar bara webbservrarna och deras IPv4-adresser – resten är f
 - Trafik till besökare ingår inte: de första 100 GB ut till internet per månad är gratis. Trafik till S3 går via gateway endpoint och är gratis.
 - CloudWatch-larmen (4 st från target tracking) ingår inte – under 0,50 USD/månad och inom free tier (10 larm).
 - Free tier är inte medräknad. På konton skapade efter 15 juli 2025 dras kostnaden från Free Plan-krediterna (upp till 200 USD, 6 månader); äldre konton har i stället 750 h/månad gratis för bl.a. t3.micro, RDS och publik IPv4 under första året.
+- Bastionen räknas som igång hela månaden (ingår i EC2 och IPv4 i båda kolumnerna).
 - Bastionen kan stoppas när ingen administrerar och sparar då ~11,50 USD/månad (instansen ~7,90 USD + dess publika IPv4 ~3,65 USD; disken kostar fortfarande).
 
 #### *__Normalläge:__*
