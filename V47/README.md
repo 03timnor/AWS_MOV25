@@ -4572,7 +4572,7 @@ AWS_MOV25/
 
 ## *__3. Verifiering__*
 
-### *__Webbsida fungerar:__*
+### *__Webbsida fungerar, även när en instans är nere:__*
 
 ![alt text](pictures/website.png)
 
@@ -4613,6 +4613,8 @@ AWS_MOV25/
 ### *__Skalning och självläkning:__*
 
 ![alt text](pictures/healing_and_scaling.png)
+
+![alt text](healing_and_scaling_2.png)
 
 ### *__Verifiering OK:__*
 
