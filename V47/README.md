@@ -4,7 +4,7 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-11-22*
 
-Veckans uppgift går ut på att göra lösningen ifrån *V47* skalbar och högtillgänglig med en *Application Load Balancer* och en *Auto Scaling*-grupp som sprider lasten över flera *Availability Zones*.
+Veckans uppgift går ut på att göra lösningen ifrån *V46* skalbar och högtillgänglig med en *Application Load Balancer* och en *Auto Scaling*-grupp som sprider lasten över flera *Availability Zones*.
 
 ## *__1. Skapa infrastrukturen / miljön med CloudFormation-mallar (Kod)__*
 
@@ -4352,8 +4352,8 @@ VPC: `10.0.0.0/16`. Webbnivån `10.0.2.0/23` och datanivån `10.0.10.0/23` gör 
 
 | Del | Inställning | Varför |
 |---|---|---|
-| Application Load Balancer | Internet-facing, noder i 2 AZ, HTTP 80 + HTTPS 443 (TLS 1.2/1.3) | Enda publika ingången; sprider trafiken över AZ:erna |
-| Hälsokontroll | `GET /healthz.php` var 15 sekund, frisk efter 2 OK, ur rotation efter 3 fel | Kontrollerar PHP + EFS, inte databasen (ett DB-avbrott löses inte av att byta servrar) |
+| Application Load Balancer | Internet-facing, noder i 2 AZ, HTTP 80 + HTTPS 443 (TLS 1.2/1.3) | Enda ingången för besökare; sprider trafiken över AZ:erna |
+| Hälsokontroll | `GET /healthz.php` var 15:e sekund, frisk efter 2 OK, ur rotation efter 3 fel | Kontrollerar PHP + EFS, inte databasen (ett DB-avbrott löses inte av att byta servrar) |
 | Auto Scaling-grupp | min 2, max 4, web-a + web-b, health check type ELB | En server per AZ; trasiga servrar byts ut automatiskt |
 | Skalningspolicy 1 | Target tracking: CPU 50 % | Tunga sidor |
 | Skalningspolicy 2 | Target tracking: 60 ALB-anrop per server och minut | ~60 % av uppmätt kapacitet (~100/min per server) |
@@ -4364,7 +4364,7 @@ VPC: `10.0.0.0/16`. Webbnivån `10.0.2.0/23` och datanivån `10.0.10.0/23` gör 
 
 | Tjänst | Konfiguration |
 |---|---|
-| RDS | MariaDB, db.t4g.micro, 20 GiB gp2, krypterad, Single-AZ (Multi-AZ valbart), TLS krävs, 1 dags automatisk backup |
+| RDS | MariaDB, db.t4g.micro, 20 GiB gp2, krypterad, Single-AZ (Multi-AZ valbart), TLS (certifikatet verifieras), 1 dags automatisk backup |
 | EFS | Delade WordPress-filer för alla servrar, krypterad i vila och transit, access point (uid/gid 48), mount target i varje AZ |
 | S3 | En privat bucket: `drafts/`, `web/`, `logs/` (30 dagar), `backup/` (14 dagar) |
 | Backup | Daglig databasdump + wp-content till S3 – en server per dygn för hela gruppen |
@@ -4384,7 +4384,7 @@ Inga lösenord finns i mallar, script eller Git.
 | Användare / roll | Får | Får inte |
 |---|---|---|
 | `anna.ops` (drift) | Se all drift, starta/stoppa servrar, ändra antal webbservrar inom min/max, hämta backuper | Ändra min/max, nätverk, databas, hemligheter, stackar |
-| `erik.dev` (utveckling) | Ladda upp utkast, läsa publicerad sida, driftsätta Lambda-kod | Publicera förbi Lambdan, läsa backuper/loggar/hemligheter |
+| `erik.dev` (utveckling) | Ladda upp utkast, läsa publicerad sida, driftsätta Lambda-kod | Publicera förbi Lambdan, läsa backuper/besökarloggar/hemligheter |
 | `maja.marketing` (marknad) | Ladda upp bilder till `drafts/images/` | Radera, ändra sidor |
 | `novatrix-web-ec2-role` | Läsa `web/`, de 3 hemligheterna, montera EFS via access point | Skriva till S3 direkt, läsa backuper |
 | `novatrix-uploader-role` | Skriva till `logs/` och `backup/` (kan bara antas av webbserverrollen) | Läsa eller radera något |
@@ -4394,20 +4394,41 @@ Inga lösenord finns i mallar, script eller Git.
 
 #### *__Last:__*
 
-*Auto Scaling*-gruppen har två stycken tracking-policies, 60 anrop per server och minut och 50% *CPU*. Överskrids ett mål i 3 minuter startar nya servrar (max 4). Under låg last tas de bort igen.
+*Auto Scaling*-gruppen har två *target tracking*-policyer: 60 anrop per server och minut och 50 % *CPU*. Överskrids ett mål startar nya servrar (max 4) – anropsmåttet reagerar efter cirka 3 minuter, CPU-måttet något långsammare. Under låg last tas de bort igen (minst 2).
+
+*Uppmätt: 2 → 4 servrar efter cirka 5 minuters last.*
 
 #### *__Fel:__*
 
 En *Application Load Balancer* kontrollerar varje server var 15 sekund (`/healthz.php`). En server som slutar svara tas ur rotation och gruppen ersätter den automatiskt. Under tiden svarar servern i den andra *AZ*:n.
 
+*Uppmätt: terminerad server ersatt efter cirka 2 min, trasig server efter cirka 6 min – webbsidan svarade hela tiden (94 % OK).*
+
+#### *__Utrullning:__*
+
+En ny version av launch templaten rullas ut en server i taget med minst 2 i tjänst. Misslyckas den rullar CloudFormation tillbaka automatiskt.
+
 ### *__Kostnad / AWS Pricing Calculator:__*
 
+| Tjänst | Normal (2 webbservrar) | Utskalat (4 webbservrar) |
+|---|---|---|
+| EC2 (t3.micro + 8 GB gp3) | 25,66 USD | 42,76 USD |
+| Publika IPv4-adresser | 18,25 USD | 25,55 USD |
+| Application Load Balancer | 17,70 USD | 17,70 USD |
+| RDS MariaDB (db.t4g.micro) | 14,08 USD | 14,08 USD |
+| Secrets Manager, CloudWatch, EFS, S3 | 2,18 USD | 2,18 USD |
+| __Totalt per månad__ | __77,87 USD__ | __102,27 USD__ |
+
+*__Mest kostar:__* EC2 (33 % → 42 %), publika IPv4-adresser (23 % → 25 %) och lastbalanseraren (23 % → 17 %).
+Vid utskalning ökar bara webbservrarna och deras IPv4-adresser – resten är fast.
+
 #### *__Antaganden:__*
+
 - "Utskalat" = gruppen ligger på max (4 servrar) hela månaden – ett övre tak; i praktiken skalar den bara ut under lasttoppar.
 - Trafik till besökare ingår inte: de första 100 GB ut till internet per månad är gratis. Trafik till S3 går via gateway endpoint och är gratis.
 - CloudWatch-larmen (4 st från target tracking) ingår inte – under 0,50 USD/månad och inom free tier (10 larm).
-- Med free tier blir det billigare första året (750 h EC2 t3.micro, 750 h RDS, 750 h publik IPv4).
-- Bastionen kan stoppas när ingen administrerar och sparar då ~7,90 USD/månad i EC2-kostnad.
+- Free tier är inte medräknad. På konton skapade efter 15 juli 2025 dras kostnaden från Free Plan-krediterna (upp till 200 USD, 6 månader); äldre konton har i stället 750 h/månad gratis för bl.a. t3.micro, RDS och publik IPv4 under första året.
+- Bastionen kan stoppas när ingen administrerar och sparar då ~11,50 USD/månad (instansen ~7,90 USD + dess publika IPv4 ~3,65 USD; disken kostar fortfarande).
 
 #### *__Normalläge:__*
 
