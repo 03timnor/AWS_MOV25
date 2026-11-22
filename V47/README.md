@@ -4614,7 +4614,7 @@ AWS_MOV25/
 
 ![alt text](pictures/healing_and_scaling.png)
 
-![alt text](healing_and_scaling_2.png)
+![alt text](pictures/healing_and_scaling_2.png)
 
 ### *__Verifiering OK:__*
 
