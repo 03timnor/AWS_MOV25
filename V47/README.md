@@ -4,9 +4,9 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-11-22*
 
-Veckans uppgift går ut på att göra lösningen ifrån *V47* skalbar och högtillgänglig med en *Application Load Balancer* och *Auto Scaling*-grupp som sprider lasten  över flera *Availability Zones*.
+Veckans uppgift går ut på att göra lösningen ifrån *V47* skalbar och högtillgänglig med en *Application Load Balancer* och *Auto Scaling*-grupp som sprider lasten över flera *Availability Zones*.
 
-## *__1. Skapa infrastrukturen / miljön med CloudFormation mallar (Kod)__*
+## *__1. Skapa infrastrukturen / miljön med CloudFormation-mallar (Kod)__*
 
 ### *__V47_01-network.yaml__*
 
@@ -4377,7 +4377,7 @@ VPC: `10.0.0.0/16`. Webbnivån `10.0.2.0/23` och datanivån `10.0.10.0/23` gör 
 | `novatrix/db/wordpress-password` | CloudFormation (genererat, 32 tecken) | WordPress databasanvändare |
 | `novatrix/wordpress/admin-password` | CloudFormation (genererat, 32 tecken) | WordPress admin-inloggning |
 
-Inga lösenord finns i mallar, skript eller Git.
+Inga lösenord finns i mallar, script eller Git.
 
 ### *__IAM__*
 
@@ -4398,10 +4398,11 @@ Inga lösenord finns i mallar, skript eller Git.
 
 #### *__Fel:__*
 
-En *Auto Load Balancer* kontrollerar varje server var 15 sekund (`/healthz.php`). En server som slutar svara tas ur rotation och gruppen ersätter den automatiskt. Under tiden svarar servern i den andra *AZ*:n.
+En *Application Load Balancer* kontrollerar varje server var 15 sekund (`/healthz.php`). En server som slutar svara tas ur rotation och gruppen ersätter den automatiskt. Under tiden svarar servern i den andra *AZ*:n.
 
 ### *__Mappstruktur:__*
 
+```
 AWS_MOV25/
 ├── README.md
 ├── .gitignore
@@ -4463,6 +4464,7 @@ AWS_MOV25/
 │   └── README.md
 └── V49_Examination/
     └── README.md
+```
 
 > *__OBS – hälsokontrollen kontrollerar inte WordPress.__*
 > `/healthz.php` kontrollerar bara Apache, PHP och EFS på den enskilda servern. En WordPress-sida skulle
@@ -4481,7 +4483,7 @@ AWS_MOV25/
 
 ![alt text](pictures/website_2.png)
 
-### *__SSH via Bastion fungerar__*
+### *__SSH via Bastion fungerar:__*
 
 ![alt text](pictures/ssh.png)
 
@@ -4513,11 +4515,14 @@ AWS_MOV25/
 
 ![alt text](pictures/load_balancers.png)
 
-### *__Skalning och helning:__*
+### *__Skalning och självläkning:__*
 
 ![alt text](pictures/healing_and_scaling.png)
 
 ### *__Verifiering OK:__*
+
+Resultat: *__260 OK, 0 FEL__*. Del 8 visar att lösningen förblir tillgänglig när en instans faller bort
+(8.1 och 8.2) och att den skalar under last (8.3).
 
 ```
 Novatrix V47 - verifiering 2026-11-22 19:03   konto 236780468239   region eu-north-1
