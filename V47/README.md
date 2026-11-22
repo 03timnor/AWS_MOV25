@@ -4,7 +4,7 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-11-22*
 
-Veckans uppgift går ut på att göra lösningen ifrån *V47* skalbar och högtillgänglig med en *Application Load Balancer* och *Auto Scaling*-grupp som sprider lasten över flera *Availability Zones*.
+Veckans uppgift går ut på att göra lösningen ifrån *V47* skalbar och högtillgänglig med en *Application Load Balancer* och en *Auto Scaling*-grupp som sprider lasten över flera *Availability Zones*.
 
 ## *__1. Skapa infrastrukturen / miljön med CloudFormation-mallar (Kod)__*
 
@@ -4394,11 +4394,85 @@ Inga lösenord finns i mallar, script eller Git.
 
 #### *__Last:__*
 
-*Auto Scaling*-gruppen har två stycken tracking-policies, 60 anrop per server och minut och 50% *CPU*. Överskrids ett mål i 3 minuter startar nya servrar (max 4). Under låg last tas det bort igen.
+*Auto Scaling*-gruppen har två stycken tracking-policies, 60 anrop per server och minut och 50% *CPU*. Överskrids ett mål i 3 minuter startar nya servrar (max 4). Under låg last tas de bort igen.
 
 #### *__Fel:__*
 
 En *Application Load Balancer* kontrollerar varje server var 15 sekund (`/healthz.php`). En server som slutar svara tas ur rotation och gruppen ersätter den automatiskt. Under tiden svarar servern i den andra *AZ*:n.
+
+### *__Kostnad / AWS Pricing Calculator:__*
+
+#### *__Antaganden:__*
+- "Utskalat" = gruppen ligger på max (4 servrar) hela månaden – ett övre tak; i praktiken skalar den bara ut under lasttoppar.
+- Trafik till besökare ingår inte: de första 100 GB ut till internet per månad är gratis. Trafik till S3 går via gateway endpoint och är gratis.
+- CloudWatch-larmen (4 st från target tracking) ingår inte – under 0,50 USD/månad och inom free tier (10 larm).
+- Med free tier blir det billigare första året (750 h EC2 t3.micro, 750 h RDS, 750 h publik IPv4).
+- Bastionen kan stoppas när ingen administrerar och sparar då ~7,90 USD/månad i EC2-kostnad.
+
+#### *__Normalläge:__*
+
+https://calculator.aws/#/estimate?id=fe5f1c31fba676de2c8d48d43d417f38768e3dba
+
+![alt text](pictures/novatrix_normal.png)
+
+```csv
+Estimate summary
+Upfront cost,Monthly cost,Total 12 months cost,Currency
+0,77.86999999999999,934.44,USD
+,,* Includes upfront cost
+
+
+Detailed Estimate
+Group hierarchy,Region,Description,Service,Upfront,Monthly,First 12 months total,Currency,Status,Configuration summary
+novatrix_normal,Europe (Stockholm),,Amazon EC2 ,0,25.662,307.94,USD,,"Tenancy (Shared Instances), Operating system (Linux), Workload (Consistent, Number of instances: 3), Advance EC2 instance (t3.micro), Pricing strategy (On-Demand Utilization: 24 Hours/Day), Enable monitoring (disabled), EBS Storage amount (8 GB), DT Inbound: Not selected (0 TB per month), DT Outbound: Not selected (0 TB per month), DT Intra-Region: (0 TB per month)"
+novatrix_normal,Europe (Stockholm),,Application Load Balancer,0,17.7,212.40,USD,,Number of Application Load Balancers (1)
+novatrix_normal,Europe (Stockholm),,Amazon RDS for MariaDB,0,14.08,168.96,USD,,"Storage amount (20 GB), Nodes (1), Instance type (db.t4g.micro), Utilization (On-Demand only) (100 %Utilized/Month), Deployment selection (Single-AZ), Pricing strategy (OnDemand), Storage volume (General Purpose SSD (gp2)), Additional backup storage (0 GB)"
+novatrix_normal,Europe (Stockholm),,Public IPv4 Address,0,18.25,219.00,USD,,"Number of In-use public IPv4 addresses (5), Number of Idle public IPv4 addresses (0)"
+novatrix_normal,Europe (Stockholm),,AWS Secrets Manager,0,1.25,15.00,USD,,"Number of secrets (3), Average duration of each secret (30 days), Number of API calls (10000 per month)"
+novatrix_normal,Europe (Stockholm),,Amazon Elastic File System (EFS),0,0.3,3.60,USD,,"Desired Storage Capacity (1 GB per month), Infrequent Access Tiering (0 GB per month), Infrequent Access Read (0 GB per month), Archive Access Tiering (0 GB per month), Archive Access Read (0 GB per month), Read Data Transferred (0 GB per month), Write Data Transferred (0 GB per month)"
+novatrix_normal,Europe (Stockholm),,S3 Standard,0,0.03,0.36,USD,,"S3 Standard storage (1 GB per month), PUT, COPY, POST, LIST requests to S3 Standard (1000), GET, SELECT, and all other requests from S3 Standard (10000)"
+novatrix_normal,Europe (Stockholm),,Data Transfer,0,0,0.00,USD,,
+novatrix_normal,Europe (Stockholm),,Amazon CloudWatch,0,0.59862,7.18,USD,,"Number of mobile OTEL events and spans or spans per visit (70), Mobile sampling rate (1), Standard Logs: Data Ingested (0.1 GB), Infrequent Access Logs: Data Ingested (0 GB), Standard Logs Delivered to CloudWatch Logs (1 GB), Infrequent Access Logs Delivered to CloudWatch Logs (0 GB), Logs Delivered to S3: Data Ingested (0 GB)"
+
+
+
+Acknowledgement
+"* AWS Pricing Calculator provides only an estimate of your AWS fees and doesn't include any taxes that might apply. Your actual fees depend on a variety of factors, including your actual usage of AWS services."
+```
+
+#### *__Utskalat läge:__*
+
+https://calculator.aws/#/estimate?id=2c9439c2d174bda4a0940415d35f93617291a1ab
+
+![alt text](pictures/novatrix_scaled.png)
+
+
+```csv
+Estimate summary
+Upfront cost,Monthly cost,Total 12 months cost,Currency
+0,102.27000000000001,1227.24,USD
+,,* Includes upfront cost
+
+
+Detailed Estimate
+Group hierarchy,Region,Description,Service,Upfront,Monthly,First 12 months total,Currency,Status,Configuration summary
+novatrix_scaled,Europe (Stockholm),,Amazon EC2 ,0,42.760000000000005,513.12,USD,,"Tenancy (Shared Instances), Operating system (Linux), Workload (Consistent, Number of instances: 5), Advance EC2 instance (t3.micro), Pricing strategy (On-Demand Utilization: 24 Hours/Day), Enable monitoring (disabled), EBS Storage amount (8 GB), DT Inbound: Not selected (0 TB per month), DT Outbound: Not selected (0 TB per month), DT Intra-Region: (0 TB per month)"
+novatrix_scaled,Europe (Stockholm),,Application Load Balancer,0,17.7,212.40,USD,,Number of Application Load Balancers (1)
+novatrix_scaled,Europe (Stockholm),,Amazon RDS for MariaDB,0,14.08,168.96,USD,,"Storage amount (20 GB), Nodes (1), Instance type (db.t4g.micro), Utilization (On-Demand only) (100 %Utilized/Month), Deployment selection (Single-AZ), Pricing strategy (OnDemand), Storage volume (General Purpose SSD (gp2)), Additional backup storage (0 GB)"
+novatrix_scaled,Europe (Stockholm),,Public IPv4 Address,0,25.55,306.60,USD,,"Number of In-use public IPv4 addresses (7), Number of Idle public IPv4 addresses (0)"
+novatrix_scaled,Europe (Stockholm),,AWS Secrets Manager,0,1.25,15.00,USD,,"Number of secrets (3), Average duration of each secret (30 days), Number of API calls (10000 per month)"
+novatrix_scaled,Europe (Stockholm),,Amazon Elastic File System (EFS),0,0.3,3.60,USD,,"Desired Storage Capacity (1 GB per month), Infrequent Access Tiering (0 GB per month), Infrequent Access Read (0 GB per month), Archive Access Tiering (0 GB per month), Archive Access Read (0 GB per month), Read Data Transferred (0 GB per month), Write Data Transferred (0 GB per month)"
+novatrix_scaled,Europe (Stockholm),,Amazon CloudWatch,0,0.59862,7.18,USD,,"Number of mobile OTEL events and spans or spans per visit (70), Mobile sampling rate (1), Standard Logs: Data Ingested (0.1 GB), Standard Logs Delivered to CloudWatch Logs (1 GB), Infrequent Access Logs: Data Ingested (0 GB), Infrequent Access Logs Delivered to CloudWatch Logs (0 GB), Logs Delivered to S3: Data Ingested (0 GB)"
+novatrix_scaled,Europe (Stockholm),,S3 Standard,0,0.03,0.36,USD,,"S3 Standard storage (1 GB per month), PUT, COPY, POST, LIST requests to S3 Standard (1000), GET, SELECT, and all other requests from S3 Standard (10000), Data returned by S3 Select (0 GB per month), Data scanned by S3 Select (0 GB per month)"
+novatrix_scaled,Europe (Stockholm),,Data Transfer,0,0,0.00,USD,,
+
+
+
+Acknowledgement
+"* AWS Pricing Calculator provides only an estimate of your AWS fees and doesn't include any taxes that might apply. Your actual fees depend on a variety of factors, including your actual usage of AWS services."
+```
+
+
 
 ### *__Mappstruktur:__*
 
@@ -4409,13 +4483,13 @@ AWS_MOV25/
 ├── V42/
 │   ├── images/
 │   ├── README.md
-│   └── V42_novatrix-ec2….sh
+│   └── V42_novatrix-ec2.sh
 ├── V43/
 │   ├── pictures/
 │   ├── README.md
 │   ├── V43_cleanup.sh
 │   ├── V43_config.sh
-│   ├── V43_novatrix-iam….sh
+│   ├── V43_novatrix-iam.sh
 │   └── V43_verify.sh
 ├── V44/
 │   ├── pictures/
@@ -4487,7 +4561,7 @@ AWS_MOV25/
 
 ![alt text](pictures/ssh.png)
 
-### *__Cloud Formation:__*
+### *__CloudFormation:__*
 
 ![alt text](pictures/cloud_formation.png)
 
