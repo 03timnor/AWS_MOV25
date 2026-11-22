@@ -4400,6 +4400,70 @@ Inga lösenord finns i mallar, skript eller Git.
 
 En *Auto Load Balancer* kontrollerar varje server var 15 sekund (`/healthz.php`). En server som slutar svara tas ur rotation och gruppen ersätter den automatiskt. Under tiden svarar servern i den andra *AZ*:n.
 
+### *__Mappstruktur:__*
+
+AWS_MOV25/
+├── README.md
+├── .gitignore
+├── V42/
+│   ├── images/
+│   ├── README.md
+│   └── V42_novatrix-ec2….sh
+├── V43/
+│   ├── pictures/
+│   ├── README.md
+│   ├── V43_cleanup.sh
+│   ├── V43_config.sh
+│   ├── V43_novatrix-iam….sh
+│   └── V43_verify.sh
+├── V44/
+│   ├── pictures/
+│   ├── README.md
+│   ├── V44_cleanup.sh
+│   ├── V44_config.sh
+│   ├── V44_network.yaml
+│   ├── V44_novatrix.sh
+│   └── V44_verify.sh
+├── V45/
+│   ├── pictures/
+│   ├── README.md
+│   ├── V45_cleanup.sh
+│   ├── V45_config.sh
+│   ├── V45_infra.yaml
+│   ├── V45_novatrix.sh
+│   └── V45_verify.sh
+├── V46/
+│   ├── content/
+│   ├── pictures/
+│   ├── templates/
+│   ├── README.md
+│   ├── V46_cleanup.sh
+│   ├── V46_config.sh
+│   ├── V46_novatrix.sh
+│   └── V46_verify.sh
+├── V47/                              # Skalbar och högtillgänglig WordPress (ALB + Auto Scaling)
+│   ├── README.md                     # dokumentation, arkitektur, kostnad, verifiering
+│   ├── V47_config.sh                 # alla inställningar (namn, CIDR, storlekar, skalningsgränser)
+│   ├── V47_novatrix.sh               # bygger/uppdaterar miljön (--plan = visa ändringar)
+│   ├── V47_verify.sh                 # verifiering Del 0–7, --all även failover/självläkning/last
+│   ├── V47_cleanup.sh                # tar bort allt i omvänd ordning
+│   ├── templates/                    # CloudFormation, ett lager per stack
+│   │   ├── V47_01-network.yaml       # VPC, subnät, SG (inkl. ALB), NACL, S3 endpoint, flow logs
+│   │   ├── V47_02-data.yaml          # RDS, EFS, Secrets Manager
+│   │   ├── V47_03-security.yaml      # IAM: roller, grupper, policyer, användare
+│   │   ├── V47_04-storage.yaml       # S3-bucket + publicerings-Lambda
+│   │   └── V47_05-compute.yaml       # launch template, ALB, target group, Auto Scaling, bastion
+│   ├── content/                      # statisk sida: S3 -> Lambda -> /static/
+│   │   ├── index.html
+│   │   ├── style.css
+│   │   └── images/
+│   │       └── crane.svg
+│   └── pictures/                     # skärmbilder till README
+├── V48/
+│   └── README.md
+└── V49_Examination/
+    └── README.md
+
 > *__OBS – hälsokontrollen kontrollerar inte WordPress.__*
 > `/healthz.php` kontrollerar bara Apache, PHP och EFS på den enskilda servern. En WordPress-sida skulle
 > kräva databasen (är RDS nere byts alla servrar ut i onödan) och tar 3–4 s under last (friska servrar
