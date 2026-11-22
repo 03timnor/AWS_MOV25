@@ -1165,8 +1165,21 @@ if [[ "$DO_SELFHEAL" == yes ]]; then
   fi
 fi
 
+# Safety: load only OUR load balancer. The address must be the one EC2 reports
+# for the ALB named $ALB_NAME in THIS account and region, and an AWS ELB name.
+if [[ "$DO_LOAD" == yes ]]; then
+  own_dns=$(aws elbv2 describe-load-balancers --region "$REGION" --names "$ALB_NAME" \
+              --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
+  if [[ -z "$ALB_DNS" || "$own_dns" != "$ALB_DNS" || "$ALB_DNS" != *".${REGION}.elb.amazonaws.com" ]]; then
+    echo; echo "Del 8.3 hoppas över: '${ALB_DNS:-?}' är inte kontots egen lastbalanserare $ALB_NAME (${own_dns:-saknas})."
+    DO_LOAD=no
+  fi
+fi
+
 if [[ "$DO_LOAD" == yes ]]; then
   LOAD_MINUTES=${LOAD_MINUTES:-8}; LOAD_WORKERS=${LOAD_WORKERS:-12}
+  (( LOAD_WORKERS <= 30 && LOAD_MINUTES <= 15 )) || { echo "LOAD_WORKERS max 30, LOAD_MINUTES max 15"; exit 2; }
+  echo "Mål: $SITE/  = $ALB_NAME i konto $ACCOUNT_ID ($REGION) - bara GET mot startsidan, ingen annan adress."
   echo; echo "=== Del 8.3: lasttest - $LOAD_WORKERS parallella besökare i $LOAD_MINUTES minuter mot $SITE/ ==="
   start_desired=$(asg_field DesiredCapacity); max_desired=$start_desired
   echo "Före: önskat $start_desired servrar. Målvärden: $REQUESTS_PER_TARGET anrop/server/minut och ${CPU_TARGET}% CPU."

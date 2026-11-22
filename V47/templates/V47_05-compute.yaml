@@ -205,6 +205,36 @@ Resources:
         # Part 1 (Fn::Sub): this server's settings, written to an env file.
         # Part 2 (plain text, no substitution): the installation, which only reads
         # the env file - so bash's own ${...} needs no escaping.
+        # What the user data does, in order (the comments live HERE, outside the
+        # script: EC2 limits user data to 16 KB, and every comment line counted):
+        #   1. env file /etc/novatrix/wordpress.env (Fn::Sub part) - the rest only reads it
+        #   2. trap EXIT -> cfn-signal: success or failure is reported to CloudFormation at
+        #      once (a server started later by scaling also signals - ignored then)
+        #   3. packages; RDS CA in the trust store (mysql + PHP verify the database's TLS)
+        #   4. SSH hardening (validated with sshd -t first - never lock ourselves out)
+        #   5. Apache: HTTP only (TLS ends at the ALB, only the ALB may connect),
+        #      security headers, no xmlrpc, no PHP in uploads, /.novatrix denied,
+        #      /static/ (S3 content), /healthz.php (the ALB health check: PHP + EFS,
+        #      NOT the database), mod_remoteip: the visitor's real IP from
+        #      X-Forwarded-For, trusted only from the web tier where the ALB lives
+        #   6. EFS mount: tls + iam + access point (uid/gid 48); the EFS DNS name gives
+        #      the mount target in this server's own AZ; nofail so a missing EFS never
+        #      stops the boot; httpd/php-fpm get RequiresMountsFor
+        #   7. helpers in /usr/local/bin: novatrix-secret (Secrets Manager, never on
+        #      disk), s3-curl, novatrix-sync, as-uploader (role chaining),
+        #      novatrix-logs (per instance id), novatrix-db (master user + password from
+        #      the secret RDS manages and rotates), novatrix-backup (ONE per day for
+        #      the whole group: the first server to create today's marker on EFS with
+        #      O_EXCL takes it; NOVATRIX_BACKUP_FORCE=1 always runs)
+        #   8. systemd timers: sync, logs, backup, wp-cron (WordPress locks its cron)
+        #   9. flock on EFS: at the first deploy two servers boot at once - the second
+        #      waits until the first has created the DB user and installed WordPress
+        #  10. DB user limited to the web tier CIDR; WordPress via WP-CLI (idempotent:
+        #      a new server finds it installed); wp-config trusts X-Forwarded-Proto
+        #      from the ALB (no mixed content) and follows the visitor's host name;
+        #      DB_PASSWORD is re-synced from the secret on every boot
+        #  11. first static sync, start services, prove http://localhost/ and
+        #      /healthz.php answer - only then signal success
         UserData:
           Fn::Base64: !Join
             - ""
@@ -252,28 +282,19 @@ Resources:
               - |
                 source /etc/novatrix/wordpress.env
 
-                # --- Report the result to CloudFormation (CreationPolicy/UpdatePolicy)
-                # Runs on EVERY exit: 0 = done, anything else fails the deploy at once
-                # instead of after the 20-minute timeout. A server started later by
-                # scaling also signals - CloudFormation just ignores that.
                 signal() {
                   [ -x /opt/aws/bin/cfn-signal ] && /opt/aws/bin/cfn-signal -e "$1" \
                     --stack "$CFN_STACK" --resource "$CFN_RESOURCE" --region "$REGION" || true
                 }
                 trap 'rc=$?; signal "$rc"; exit "$rc"' EXIT
 
-                # --- Packages: required ones must install, extras are best effort ----
                 dnf install -y aws-cfn-bootstrap httpd php php-fpm php-mysqlnd mariadb105 amazon-efs-utils util-linux
                 dnf install -y --setopt=strict=0 php-gd php-mbstring php-xml php-opcache php-intl || true
 
-                # --- TLS to the database: RDS requires it --------------------------------
-                # Trust Amazon RDS's CA, so both the mysql client and PHP verify that
-                # they really talk to OUR database (no man-in-the-middle).
                 curl -fsSL -o /etc/pki/ca-trust/source/anchors/rds-$REGION.pem \
                   "https://truststore.pki.rds.amazonaws.com/$REGION/$REGION-bundle.pem"
                 update-ca-trust extract
 
-                # --- SSH hardening: reachable only from the bastion, no forwarding ---
                 cat > /etc/ssh/sshd_config.d/10-novatrix.conf <<'SSHD'
                 PermitRootLogin no
                 PasswordAuthentication no
@@ -286,14 +307,9 @@ Resources:
                 ClientAliveCountMax 2
                 AllowTcpForwarding no
                 SSHD
-                # Validate before reloading: a typo must never lock us out of the server.
                 if sshd -t; then systemctl reload sshd
                 else echo "sshd rejected 10-novatrix.conf - removed it" >&2; rm -f /etc/ssh/sshd_config.d/10-novatrix.conf; fi
 
-                # --- Apache + PHP hardening -------------------------------------------
-                # TLS ends at the load balancer: the server only speaks HTTP on port 80,
-                # and only the ALB's security group may reach it (no mod_ssl needed).
-                # CSP/X-Frame-Options allow same-origin framing: WordPress's editor needs it.
                 cat > /etc/httpd/conf.d/10-novatrix-security.conf <<'CONF'
                 ServerTokens Prod
                 ServerSignature Off
@@ -308,22 +324,18 @@ Resources:
                     AllowOverride All
                     Require all granted
                 </Directory>
-                # XML-RPC: old remote API, a favourite for password guessing. Not used here.
                 <Files "xmlrpc.php">
                     Require all denied
                 </Files>
-                # Uploaded files are data, never code: no PHP runs from the uploads folder.
                 <Directory "/var/www/html/wp-content/uploads">
                     <FilesMatch "\.(php|phtml|phar)$">
                         Require all denied
                     </FilesMatch>
                 </Directory>
-                # The servers' shared locks and markers on EFS are never served.
                 <DirectoryMatch "^/var/www/html/\.novatrix">
                     Require all denied
                 </DirectoryMatch>
 
-                # Static content published from S3 web/ (the Lambda chain)
                 Alias /static/ /var/www/static/
                 <Directory "/var/www/static">
                     Options -Indexes
@@ -331,7 +343,6 @@ Resources:
                     Require all granted
                 </Directory>
 
-                # Health check for the load balancer (outside WordPress, see healthz.php)
                 Alias /healthz.php /var/www/health/healthz.php
                 <Directory "/var/www/health">
                     Options None
@@ -339,9 +350,6 @@ Resources:
                     Require all granted
                 </Directory>
                 CONF
-                # Every request now comes from the ALB: log (and show WordPress) the
-                # visitor's real address - X-Forwarded-For is only trusted from the
-                # web tier, where the ALB's nodes live.
                 printf '<IfModule remoteip_module>\nRemoteIPHeader X-Forwarded-For\nRemoteIPInternalProxy %s\n</IfModule>\n' \
                   "$WEB_TIER_CIDR" > /etc/httpd/conf.d/11-novatrix-remoteip.conf
                 cat > /etc/php.d/90-novatrix.ini <<'INI'
@@ -352,8 +360,6 @@ Resources:
                 mkdir -p /var/www/health
                 cat > /var/www/health/healthz.php <<'PHP'
                 <?php
-                // Load balancer health check: PHP-FPM answers AND WordPress's files on EFS
-                // are readable. The database is deliberately not checked (see the template).
                 header('Content-Type: text/plain');
                 header('Cache-Control: no-store');
                 if (is_file('/var/www/html/wp-config.php') && is_file('/var/www/html/wp-includes/version.php')) {
@@ -364,11 +370,6 @@ Resources:
                 }
                 PHP
 
-                # --- EFS: WordPress files on shared storage ----------------------------
-                # tls = encrypted NFS, iam = the instance role authenticates, accesspoint
-                # = forced to uid/gid 48 (apache). The DNS name resolves to the mount
-                # target in THIS server's AZ. nofail: a missing EFS must never stop the
-                # server from booting (we would lose SSH).
                 mkdir -p "$WP_ROOT"
                 echo "$FS_ID:/ $WP_ROOT efs _netdev,nofail,tls,iam,accesspoint=$AP_ID 0 0" >> /etc/fstab
                 for i in $(seq 1 18); do
@@ -376,14 +377,11 @@ Resources:
                   echo "waiting for EFS / the instance role ($i/18)"; sleep 10
                 done
                 mountpoint -q "$WP_ROOT"
-                # Apache and PHP must never start on the empty local folder underneath.
                 for svc in httpd php-fpm; do
                   mkdir -p /etc/systemd/system/$svc.service.d
                   printf '[Unit]\nRequiresMountsFor=%s\n' "$WP_ROOT" > /etc/systemd/system/$svc.service.d/10-novatrix-efs.conf
                 done
 
-                # --- novatrix-secret: read a secret from Secrets Manager (never on disk)
-                # Usage: novatrix-secret <arn> [json-key]
                 cat > /usr/local/bin/novatrix-secret <<'SH'
                 #!/bin/bash
                 set -euo pipefail
@@ -398,7 +396,6 @@ Resources:
                 SH
                 chmod 700 /usr/local/bin/novatrix-secret
 
-                # --- s3-curl: reach S3 with nothing but curl and the instance role ----
                 cat > /usr/local/bin/s3-curl <<'SH'
                 #!/bin/bash
                 set -euo pipefail
@@ -418,7 +415,6 @@ Resources:
                 SH
                 chmod 755 /usr/local/bin/s3-curl
 
-                # --- novatrix-sync: static content S3 web/ -> /var/www/static -------
                 mkdir -p /var/www/static
                 cat > /usr/local/bin/novatrix-sync <<'SH'
                 #!/bin/bash
@@ -427,7 +423,6 @@ Resources:
                 SH
                 chmod 755 /usr/local/bin/novatrix-sync
 
-                # --- as-uploader: role chaining (reader -> uploader) ---------------
                 cat > /usr/local/bin/as-uploader <<'SH'
                 #!/bin/bash
                 set -euo pipefail
@@ -443,8 +438,6 @@ Resources:
                 SH
                 chmod 755 /usr/local/bin/as-uploader
 
-                # --- novatrix-logs: archive Apache logs via the uploader role -------
-                # Every server uploads its own logs (prefix = instance id).
                 cat > /usr/local/bin/novatrix-logs <<'SH'
                 #!/bin/bash
                 set -euo pipefail
@@ -464,10 +457,6 @@ Resources:
                 SH
                 chmod 755 /usr/local/bin/novatrix-logs
 
-                # --- novatrix-db: mysql client, password from Secrets Manager ---------
-                # Usage: novatrix-db app|master [args]   (NOVATRIX_DUMP=1 -> mysqldump)
-                # The master user's name and password come from the secret RDS manages
-                # (and rotates) - always the current one.
                 cat > /usr/local/bin/novatrix-db <<'SH'
                 #!/bin/bash
                 set -euo pipefail
@@ -489,10 +478,6 @@ Resources:
                 SH
                 chmod 750 /usr/local/bin/novatrix-db
 
-                # --- novatrix-backup: DB dump + wp-content -> S3 backup/ (uploader) ---
-                # All servers share EFS and RDS, so ONE backup per day is enough: the
-                # first server to create today's marker on EFS takes it (O_EXCL, atomic
-                # on NFSv4), the others skip. NOVATRIX_BACKUP_FORCE=1 always runs.
                 cat > /usr/local/bin/novatrix-backup <<'SH'
                 #!/bin/bash
                 set -euo pipefail
@@ -509,7 +494,6 @@ Resources:
                 fi
                 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
                 DUMP=$(mktemp /tmp/novatrix-db-XXXXXX.sql.gz); trap 'rm -f "$DUMP"' EXIT
-                # Dump first, upload after: a failed dump never becomes an empty "backup".
                 NOVATRIX_DUMP=1 /usr/local/bin/novatrix-db app --single-transaction --no-tablespaces "$DB_NAME" | gzip > "$DUMP"
                 /usr/local/bin/as-uploader aws s3 cp "$DUMP" \
                   "s3://$BUCKET/backup/db/$STAMP-$DB_NAME.sql.gz" --region "$REGION" --only-show-errors
@@ -520,7 +504,6 @@ Resources:
                 SH
                 chmod 750 /usr/local/bin/novatrix-backup
 
-                # --- systemd: sync (interval), logs + backup (daily), wp-cron (5 min) --
                 unit() {   # name description exec-start [user]
                   printf '[Unit]\nDescription=%s\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=%s\n' \
                     "$2" "$3" > /etc/systemd/system/$1.service
@@ -540,29 +523,19 @@ Resources:
                 unit  novatrix-backup "Back up WordPress (database + wp-content) to S3" /usr/local/bin/novatrix-backup
                 timer novatrix-backup "Back up WordPress daily" "OnCalendar=*-*-* 00:00:00
                 Persistent=true"
-                # WordPress's own cron is triggered by an HTTP call to the site itself -
-                # the web security group (correctly) doesn't allow that, so systemd runs it.
-                # WordPress locks its cron itself, so several servers running it is fine.
                 unit  novatrix-wpcron "WordPress scheduled tasks" "/usr/bin/php $WP_ROOT/wp-cron.php" apache
                 timer novatrix-wpcron "WordPress scheduled tasks every 5 minutes" "OnBootSec=5min
                 OnUnitActiveSec=5min"
 
-                # --- Shared setup, ONE server at a time --------------------------------
-                # At the first deploy two servers boot at the same time against the same
-                # EFS and database. A lock file on EFS (NFSv4 lock) makes the second one
-                # wait until the first has installed WordPress - it then finds it done.
                 mkdir -p "$WP_ROOT/.novatrix"
                 exec 9>"$WP_ROOT/.novatrix/setup.lock"
                 flock -w 900 9
 
-                # --- Database: WordPress's own user (master secret only used here) -----
                 for i in $(seq 1 30); do
                   /usr/local/bin/novatrix-db master -e "SELECT 1" >/dev/null 2>&1 && break
                   echo "waiting for the database ($i/30)"; sleep 10
                 done
                 APP_PW=$(/usr/local/bin/novatrix-secret "$DB_APP_SECRET")
-                # Host part = the web tier (CIDR from layer 1, as MariaDB's net/mask):
-                # the user can't log in from anywhere else - but from BOTH web subnets.
                 bits=${WEB_TIER_CIDR#*/}
                 m=$(( (0xffffffff << (32 - bits)) & 0xffffffff ))
                 DB_USER_HOST="${WEB_TIER_CIDR%/*}/$(( m >> 24 & 255 )).$(( m >> 16 & 255 )).$(( m >> 8 & 255 )).$(( m & 255 ))"
@@ -573,24 +546,16 @@ Resources:
                 GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_APP_USER'@'$DB_USER_HOST';
                 SQL
 
-                # --- WordPress on EFS (WP-CLI). Idempotent: a replaced or added server
-                # finds WordPress already installed on EFS/RDS and just serves it. -------
                 curl -fsSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
                 chmod 755 /usr/local/bin/wp
-                # 512 MB: PHP's default 128 MB is too little to unpack the WordPress archive.
                 WP=(/usr/bin/php -d memory_limit=512M /usr/local/bin/wp --path="$WP_ROOT" --allow-root)
                 [[ -f "$WP_ROOT/wp-includes/version.php" ]] || "${WP[@]}" core download --locale="$WP_LOCALE"
                 if [[ ! -f "$WP_ROOT/wp-config.php" ]]; then
                   "${WP[@]}" config create --dbname="$DB_NAME" --dbuser="$DB_APP_USER" --dbpass="$APP_PW" \
                     --dbhost="$DB_HOST:$DB_PORT" --locale="$WP_LOCALE" --skip-check --extra-php <<'PHP'
-                // Novatrix: TLS ends at the load balancer. It tells us the visitor's
-                // protocol in X-Forwarded-Proto; only the ALB can reach this server, so
-                // the header can be trusted (otherwise: mixed-content http:// links).
                 if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
                     $_SERVER['HTTPS'] = 'on';
                 }
-                // The site address follows the address the visitor used (no domain yet:
-                // the ALB's DNS name, and the same code works when a domain is added).
                 if (isset($_SERVER['HTTP_HOST'])) {
                     $novatrix_scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
                     define('WP_HOME', $novatrix_scheme . '://' . $_SERVER['HTTP_HOST']);
@@ -603,8 +568,6 @@ Resources:
                 define('WP_AUTO_UPDATE_CORE', 'minor');
                 PHP
                 fi
-                # The secret is the truth: keep wp-config.php in step with it (e.g. after
-                # the secret has been changed) - every new server does this.
                 "${WP[@]}" config set DB_PASSWORD "$APP_PW" --quiet
                 if ! "${WP[@]}" core is-installed 2>/dev/null; then
                   ADMIN_PW=$(/usr/local/bin/novatrix-secret "$WP_ADMIN_SECRET")
@@ -618,7 +581,6 @@ Resources:
                 mkdir -p "$WP_ROOT/wp-content/uploads"
                 exec 9>&-      # release the setup lock: the next server may continue
 
-                # --- First static sync (retry while the role's credentials arrive) ----
                 for i in $(seq 1 12); do
                   /usr/local/bin/novatrix-sync && [[ -f /var/www/static/index.html ]] && break
                   sleep 5
@@ -627,8 +589,6 @@ Resources:
                 systemctl daemon-reload
                 systemctl enable --now php-fpm httpd novatrix-sync.timer novatrix-logs.timer \
                   novatrix-backup.timer novatrix-wpcron.timer
-                # Prove this server works (WordPress AND the health check) before telling
-                # CloudFormation it's done - the ALB then takes it into rotation.
                 curl -sf -o /dev/null http://localhost/
                 curl -sf -o /dev/null "http://localhost/healthz.php"
                 echo "Novatrix WordPress ready"

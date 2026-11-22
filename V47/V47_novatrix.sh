@@ -126,6 +126,14 @@ for t in "${TEMPLATES[@]}"; do
   echo "Valid template: $t"
 done
 [[ -d "$CONTENT_DIR" ]] || { echo "Missing $CONTENT_DIR/ (the static site: index.html, style.css ...)" >&2; exit 1; }
+# EC2 refuses user data over 16,384 bytes - and only when the stack is created,
+# after the earlier layers. Estimate it here: the web server's user data block
+# without YAML indentation, plus ~1,200 bytes for the values CloudFormation fills in.
+UD_BYTES=$(awk '/^  WebLaunchTemplate:/ { lt = 1 } lt && /UserData:/ { on = 1; next }
+                on && /^  [A-Za-z]/ { exit } on && !/^ *#/ { sub(/^ +/, ""); n += length($0) + 1 }
+                END { print n + 1200 }' "${TEMPLATES[4]}")
+(( UD_BYTES <= 16384 )) || { echo "Web server user data ~${UD_BYTES} bytes > EC2's limit 16,384 - shorten it." >&2; exit 1; }
+echo "Web server user data: ~${UD_BYTES} of 16,384 bytes"
 
 # V45 kept network + RDS + EFS in the stack "<project>-natverk" and built the
 # rest with the CLI. Its resources use the same names - remove V45 first.
