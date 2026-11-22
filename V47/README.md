@@ -4400,12 +4400,12 @@ Inga lösenord finns i mallar, skript eller Git.
 
 En *Auto Load Balancer* kontrollerar varje server var 15 sekund (`/healthz.php`). En server som slutar svara tas ur rotation och gruppen ersätter den automatiskt. Under tiden svarar servern i den andra *AZ*:n.
 
-> **OBS – hälsokontrollen kontrollerar inte WordPress.**
+> *__OBS – hälsokontrollen kontrollerar inte WordPress.__*
 > `/healthz.php` kontrollerar bara Apache, PHP och EFS på den enskilda servern. En WordPress-sida skulle
 > kräva databasen (är RDS nere byts alla servrar ut i onödan) och tar 3–4 s under last (friska servrar
 > skulle underkännas). Databasfel löses inte genom att byta servrar.
 
-> **OBS – `content/` (HTML, CSS, SVG) finns kvar.**
+> *__OBS – `content/` (HTML, CSS, SVG) finns kvar.__*
 > Den statiska sidan visar publiceringskedjan från tidigare veckor: Git → S3 → Lambda → `/static/` på
 > varje server. Verifieringen testar den, innehållet finns i repository.
 
