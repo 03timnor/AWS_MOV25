@@ -230,7 +230,7 @@ Resources:
               return {"available": available, "passed": sum(ok for ok, _ in results),
                       "checks": len(results), "ms": ms}
 
-  SiteCheckSchedule:
+  SiteCheckRule:
     Type: AWS::Events::Rule
     Properties:
       Name: !Sub "${ProjectName}-site-check"
@@ -246,7 +246,7 @@ Resources:
       FunctionName: !Ref SiteCheckFunction
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
-      SourceArn: !GetAtt SiteCheckSchedule.Arn
+      SourceArn: !GetAtt SiteCheckRule.Arn
 
   # ===========================================================================
   # Metric filters: log lines -> numbers -> alarms. The log groups belong to
