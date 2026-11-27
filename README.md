@@ -23,7 +23,7 @@
 ## *__V47 - Skalbarhet och tillgänglighet__*
 - [x] [V47](https://github.com/03timnor/AWS_MOV25/tree/main/V47)
 
-## *__V48 - Monitorering och cloud natives__*
+## *__V48 - Monitorering och cloud native__*
 - [ ] [V48](https://github.com/03timnor/AWS_MOV25/tree/main/V48)
 
 ## *__V49 - Examination__*
