@@ -1,0 +1,777 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Novatrix V48 - layer 6 of 6: monitoring. Alarm mails (SNS), CloudWatch
+  alarms on CPU, memory, disk, the load balancer, the database, EFS and the
+  logs, a serverless site check (Lambda + EventBridge) that asks the website
+  like a visitor, metric filters that turn log lines into alarms, saved Logs
+  Insights queries and a dashboard. Imports from layers 2, 3 and 5.
+
+# =============================================================================
+# Who measures what
+#   EC2 (free, from the outside)   CPU per Auto Scaling group
+#   CloudWatch agent (layer 5)     memory + root disk (only visible INSIDE the OS),
+#                                  five log files per server -> /<project>/web/*
+#   ALB, RDS, EFS, Lambda (free)   requests, 5xx, healthy servers, DB CPU/memory/
+#                                  storage, EFS burst credits, Lambda errors
+#   site check (this layer)        the visitor's view: is the site up, how fast?
+#   metric filters (this layer)    "PHP Fatal" and "novatrix-backup FAILED" in the logs
+#
+# Two kinds of alarm (name tells which):
+#   <project>-critical-*  the site is down or about to be - mail on ALARM AND on OK
+#                         (you also learn that it's over without logging in)
+#   <project>-warning-*   needs a look, not a night call - mail on ALARM only
+# Every alarm mail goes to ONE SNS topic; its e-mail subscription must be
+# confirmed once (link in the first mail from AWS).
+# =============================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: General }
+        Parameters: [ProjectName, AlarmEmail, HttpsEnabled, LogRetentionDays]
+      - Label: { default: Site check }
+        Parameters: [SiteCheckSchedule, SlowSiteMs]
+      - Label: { default: Thresholds }
+        Parameters: [WebCpuAlarmPercent, WebMemoryAlarmPercent, WebDiskAlarmPercent, AsgMaxSize]
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: novatrix
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  AlarmEmail:
+    Type: String
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    ConstraintDescription: An e-mail address
+    Description: Receives every alarm (and OK for the critical ones)
+  HttpsEnabled:
+    Type: String
+    Default: "no"
+    AllowedValues: ["yes", "no"]
+    Description: yes = the site check also asks over HTTPS (the compute layer's HttpsEnabled)
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90]
+  SiteCheckSchedule:
+    Type: String
+    Default: rate(5 minutes)
+    Description: How often the site check runs (EventBridge schedule expression)
+  SlowSiteMs:
+    Type: Number
+    Default: 3000
+    Description: Warning when the start page is slower than this (average over 15 min)
+  WebCpuAlarmPercent:
+    Type: Number
+    Default: 80
+    Description: Above the scaling target (50) on purpose - alarm = scaling is NOT keeping up
+  WebMemoryAlarmPercent:
+    Type: Number
+    Default: 85
+  WebDiskAlarmPercent:
+    Type: Number
+    Default: 80
+  AsgMaxSize:
+    Type: Number
+    Default: 4
+    Description: Same as the compute layer's - warning when the group sits at its cost ceiling
+
+Conditions:
+  Https: !Equals [!Ref HttpsEnabled, "yes"]
+
+Resources:
+  # ===========================================================================
+  # Notification: one topic, e-mail. Not encrypted with a KMS key on purpose:
+  # CloudWatch alarms cannot publish to a topic encrypted with the AWS managed
+  # key aws/sns (a customer managed key costs 1 USD/month).
+  # ===========================================================================
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-alarms"
+      DisplayName: Novatrix
+      Subscription:
+        - { Protocol: email, Endpoint: !Ref AlarmEmail }
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # Only CloudWatch (in THIS account) and the account itself may publish.
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref AlarmTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudWatchAlarmsFromThisAccount
+            Effect: Allow
+            Principal: { Service: cloudwatch.amazonaws.com }
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition: { StringEquals: { "aws:SourceAccount": !Ref AWS::AccountId } }
+          - Sid: AccountOwner
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: [sns:Publish, sns:GetTopicAttributes, sns:Subscribe, sns:ListSubscriptionsByTopic]
+            Resource: !Ref AlarmTopic
+
+  # ===========================================================================
+  # Site check - the serverless part. A Lambda that EventBridge starts every
+  # 5 minutes. It runs OUTSIDE the VPC on purpose: it sees exactly what a
+  # visitor sees (DNS, load balancer, TLS, WordPress, EFS, database, S3
+  # content). Everything inside can be "green" while the site is unreachable
+  # - this check notices. ~8,640 runs/month: well inside Lambda's free tier
+  # (CloudWatch Synthetics would cost ~10 USD/month for the same).
+  # Source: lambda/site-check.py (identical, the deploy script checks it).
+  # ===========================================================================
+  SiteCheckLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-site-check"
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  SiteCheckFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: SiteCheckLogGroup
+    Properties:
+      FunctionName: !Sub "${ProjectName}-site-check"
+      Description: Asks the website like a visitor, reports Available + ResponseTimeMs to CloudWatch
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role:
+        Fn::ImportValue: !Sub "${ProjectName}-SiteCheckRoleArn"
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          SITE_NAME: !Ref ProjectName
+          SITE_URL: !Sub
+            - "http://${Dns}"
+            - Dns: { "Fn::ImportValue": !Sub "${ProjectName}-AlbDnsName" }
+          HTTPS_URL: !If
+            - Https
+            - !Sub
+              - "https://${Dns}"
+              - Dns: { "Fn::ImportValue": !Sub "${ProjectName}-AlbDnsName" }
+            - ""
+          # path|text that must be in the answer: WordPress (start page + login,
+          # database and EFS), the health check, the static content from S3
+          CHECKS: "/|wp-content,/wp-login.php|user_login,/healthz.php|ok,/static/|Static content"
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+      Code:
+        ZipFile: |
+          """novatrix-site-check: asks the site like a visitor (from OUTSIDE the VPC).
+
+          Runs every 5 minutes (EventBridge). Each check fetches one page through the
+          load balancer and demands HTTP 200 AND a text that proves the RIGHT content
+          answered (not e.g. an error page). Two metrics to CloudWatch, namespace
+          Novatrix/SiteCheck, dimension Site:
+            Available       1 = every check passed, 0 = at least one failed
+            ResponseTimeMs  the start page
+          The alarms in the monitoring layer watch them and mail via SNS. One JSON line
+          per check goes to the log -> searchable with Logs Insights.
+
+          The deployed code is inline in templates/V48_06-monitoring.yaml (no zip, no
+          build step); the deploy script refuses to run if the two differ.
+          """
+          import json
+          import os
+          import ssl
+          import time
+          import urllib.error
+          import urllib.request
+
+          import boto3
+
+          cloudwatch = boto3.client("cloudwatch")
+          # The ALB's certificate is self-signed (no domain yet): check that HTTPS
+          # answers with the site, not who signed the certificate.
+          NO_VERIFY = ssl._create_unverified_context()
+
+
+          def check(url, must_contain):
+              start = time.time()
+              try:
+                  request = urllib.request.Request(url, headers={"User-Agent": "novatrix-site-check"})
+                  with urllib.request.urlopen(request, timeout=10, context=NO_VERIFY) as answer:
+                      status = answer.status
+                      body = answer.read(300000).decode("utf-8", "replace")
+              except urllib.error.HTTPError as error:
+                  status, body = error.code, ""
+              except Exception as error:
+                  status, body = 0, repr(error)
+              ok = int(status == 200 and must_contain in body)
+              ms = round((time.time() - start) * 1000)
+              print(json.dumps({"url": url, "status": status, "ok": ok, "ms": ms,
+                                "error": "" if ok or status else body[:200]}))
+              return ok, ms
+
+
+          def lambda_handler(event, context):
+              site = os.environ["SITE_URL"]
+              # CHECKS = "path|text,path|text,..." (set in the template)
+              checks = [c.split("|", 1) for c in os.environ["CHECKS"].split(",")]
+              targets = [(site + path, text) for path, text in checks]
+              if os.environ.get("HTTPS_URL"):
+                  targets.append((os.environ["HTTPS_URL"] + "/", checks[0][1]))
+              results = [check(url, text) for url, text in targets]
+              available = min(ok for ok, _ in results)
+              ms = results[0][1]
+              dims = [{"Name": "Site", "Value": os.environ["SITE_NAME"]}]
+              cloudwatch.put_metric_data(Namespace="Novatrix/SiteCheck", MetricData=[
+                  {"MetricName": "Available", "Dimensions": dims, "Value": available, "Unit": "Count"},
+                  {"MetricName": "ResponseTimeMs", "Dimensions": dims, "Value": ms, "Unit": "Milliseconds"},
+              ])
+              print(json.dumps({"summary": True, "available": available, "passed": sum(ok for ok, _ in results),
+                                "checks": len(results), "ms": ms}))
+              return {"available": available, "passed": sum(ok for ok, _ in results),
+                      "checks": len(results), "ms": ms}
+
+  SiteCheckSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-site-check"
+      Description: Starts the site check
+      ScheduleExpression: !Ref SiteCheckSchedule
+      State: ENABLED
+      Targets:
+        - { Id: site-check, Arn: !GetAtt SiteCheckFunction.Arn }
+
+  SiteCheckPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SiteCheckFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SiteCheckSchedule.Arn
+
+  # ===========================================================================
+  # Metric filters: log lines -> numbers -> alarms. The log groups belong to
+  # the compute layer; a metric is only stored when a line matches (no cost
+  # while all is well).
+  # ===========================================================================
+  PhpFatalFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Sub "/${ProjectName}/web/php"
+      FilterPattern: '"PHP Fatal"'
+      MetricTransformations:
+        - { MetricNamespace: Novatrix/Logs, MetricName: PhpFatalErrors, MetricValue: "1", Unit: Count }
+
+  BackupFailedFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Sub "/${ProjectName}/web/jobs"
+      FilterPattern: '"novatrix-backup FAILED"'
+      MetricTransformations:
+        - { MetricNamespace: Novatrix/Logs, MetricName: BackupFailures, MetricValue: "1", Unit: Count }
+
+  # ===========================================================================
+  # CRITICAL alarms - mail on ALARM and on OK
+  # ===========================================================================
+  # Missing data = breaching: if the check stops reporting, we don't know
+  # that the site is up. 2 of 2 periods: one lost request is not an outage.
+  SiteDownAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-critical-site-down"
+      AlarmDescription: >-
+        The site check (a visitor's view from outside) failed twice in a row - or stopped
+        reporting. Which page failed: Logs Insights query "6 site-check failures" or
+        log group /aws/lambda/novatrix-site-check.
+      Namespace: Novatrix/SiteCheck
+      MetricName: Available
+      Dimensions: [{ Name: Site, Value: !Ref ProjectName }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  NoHealthyServersAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-critical-no-healthy-servers"
+      AlarmDescription: >-
+        The load balancer has NO healthy web server for 2 minutes - every visitor gets 503.
+        Check the target group's health and /novatrix/web/boot + /novatrix/web/error.
+      Namespace: AWS/ApplicationELB
+      MetricName: HealthyHostCount
+      Dimensions:
+        - { Name: LoadBalancer, Value: { "Fn::ImportValue": !Sub "${ProjectName}-AlbFullName" } }
+        - { Name: TargetGroup, Value: { "Fn::ImportValue": !Sub "${ProjectName}-WebTargetGroupFullName" } }
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # 5xx from the servers (PHP/database errors) AND from the ALB itself (502/503:
+  # no server answered). FILL: a metric with no 5xx at all has no data points.
+  Site5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-critical-5xx-errors"
+      AlarmDescription: >-
+        10 or more server errors (HTTP 5xx) in 5 minutes. Which pages and which server:
+        Logs Insights query "1 5xx requests".
+      Metrics:
+        - Id: errors
+          Label: 5xx (servers + load balancer)
+          Expression: FILL(target, 0) + FILL(elb, 0)
+          ReturnData: true
+        - Id: target
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: HTTPCode_Target_5XX_Count
+              Dimensions: [{ Name: LoadBalancer, Value: { "Fn::ImportValue": !Sub "${ProjectName}-AlbFullName" } }]
+            Period: 300
+            Stat: Sum
+        - Id: elb
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: HTTPCode_ELB_5XX_Count
+              Dimensions: [{ Name: LoadBalancer, Value: { "Fn::ImportValue": !Sub "${ProjectName}-AlbFullName" } }]
+            Period: 300
+            Stat: Sum
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # Above the scaling target (50 %): target tracking should keep CPU near 50.
+  # 80 % for 15 minutes means it can't - the group is at max, or new servers
+  # don't become healthy.
+  WebCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-critical-web-cpu"
+      AlarmDescription: >-
+        Average CPU of the web servers above the threshold for 15 minutes - scaling is not
+        keeping up (at max? new servers failing?). See the Auto Scaling group's activity.
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions: [{ Name: AutoScalingGroupName, Value: { "Fn::ImportValue": !Sub "${ProjectName}-AsgName" } }]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref WebCpuAlarmPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # Maximum = the WORST server: one server out of memory is enough to fail
+  # requests. Missing data = breaching: no memory figures = the CloudWatch
+  # agent has stopped on every server.
+  WebMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-critical-web-memory"
+      AlarmDescription: >-
+        A web server uses more memory than the threshold (10 minutes) - or the CloudWatch
+        agent has stopped reporting. t3.micro has 1 GiB: PHP-FPM workers or a plugin.
+      Namespace: CWAgent
+      MetricName: mem_used_percent
+      Dimensions: [{ Name: AutoScalingGroupName, Value: { "Fn::ImportValue": !Sub "${ProjectName}-AsgName" } }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref WebMemoryAlarmPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # The root disk (8 GB gp3): logs and /tmp (backup dumps) live here. WordPress
+  # itself is on EFS, which can't fill up.
+  WebDiskAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-critical-web-disk"
+      AlarmDescription: >-
+        A web server's root disk is fuller than the threshold. Usually logs or a failed
+        backup in /tmp. The server can be replaced: terminate it in the Auto Scaling group.
+      Namespace: CWAgent
+      MetricName: disk_used_percent
+      Dimensions:
+        - { Name: AutoScalingGroupName, Value: { "Fn::ImportValue": !Sub "${ProjectName}-AsgName" } }
+        - { Name: path, Value: / }
+        - { Name: fstype, Value: xfs }
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref WebDiskAlarmPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # 2 GiB = 10 % of 20 GiB. A full database stops WordPress completely.
+  DbStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-critical-db-storage"
+      AlarmDescription: >-
+        Less than 2 GiB free in the database (20 GiB). Find what grows (revisions, spam,
+        logs tables) before WordPress stops writing.
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Dimensions: [{ Name: DBInstanceIdentifier, Value: !Sub "${ProjectName}-db" }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 2147483648
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # ===========================================================================
+  # WARNING alarms - mail on ALARM only
+  # ===========================================================================
+  DbCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-db-cpu"
+      AlarmDescription: >-
+        Database CPU above 80 % for 15 minutes. db.t4g.micro is small: slow queries
+        (Query Monitor plugin) or more web servers than the database can serve.
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions: [{ Name: DBInstanceIdentifier, Value: !Sub "${ProjectName}-db" }]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  DbMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-db-memory"
+      AlarmDescription: Less than 100 MiB free memory in the database for 15 minutes (1 GiB in total).
+      Namespace: AWS/RDS
+      MetricName: FreeableMemory
+      Dimensions: [{ Name: DBInstanceIdentifier, Value: !Sub "${ProjectName}-db" }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 104857600
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # Degraded, not down: the other server(s) still serve. The Auto Scaling
+  # group replaces the sick one by itself - this tells you it happened.
+  UnhealthyServerAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-unhealthy-server"
+      AlarmDescription: >-
+        A web server has failed the load balancer's health check for 3 minutes. The Auto
+        Scaling group replaces it automatically - check why in /novatrix/web/error.
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - { Name: LoadBalancer, Value: { "Fn::ImportValue": !Sub "${ProjectName}-AlbFullName" } }
+        - { Name: TargetGroup, Value: { "Fn::ImportValue": !Sub "${ProjectName}-WebTargetGroupFullName" } }
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # The group's own metric (MetricsCollection in layer 5).
+  AsgAtMaxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-at-max-servers"
+      AlarmDescription: >-
+        The Auto Scaling group has run at its maximum (the cost ceiling) for 15 minutes.
+        More load can't be met by more servers - raise ASG_MAX (cost!) or find the cause.
+      Namespace: AWS/AutoScaling
+      MetricName: GroupInServiceInstances
+      Dimensions: [{ Name: AutoScalingGroupName, Value: { "Fn::ImportValue": !Sub "${ProjectName}-AsgName" } }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref AsgMaxSize
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # Bursting throughput: a small file system earns little credit. Out of
+  # credits = every page load on every server gets slow at once.
+  EfsCreditsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-efs-burst-credits"
+      AlarmDescription: >-
+        EFS burst credits below 100 GB - when they run out, the shared WordPress files (every
+        server) are throttled to the baseline. Look for a job reading/writing a lot.
+      Namespace: AWS/EFS
+      MetricName: BurstCreditBalance
+      Dimensions: [{ Name: FileSystemId, Value: { "Fn::ImportValue": !Sub "${ProjectName}-FileSystemId" } }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 100000000000
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  PhpFatalAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-php-fatal"
+      AlarmDescription: >-
+        "PHP Fatal" in the PHP log of a web server (metric filter). Which server and what:
+        Logs Insights query "4 errors on all servers".
+      Namespace: Novatrix/Logs
+      MetricName: PhpFatalErrors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  BackupFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-backup-failed"
+      AlarmDescription: >-
+        The nightly backup (database dump + wp-content to S3) failed - see /novatrix/web/jobs.
+        RDS's own automated backup still exists (1 day).
+      Namespace: Novatrix/Logs
+      MetricName: BackupFailures
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # The serverless parts: the publisher (drafts -> web/) and the site check
+  # itself (who watches the watcher?).
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-lambda-errors"
+      AlarmDescription: >-
+        The publisher or the site check Lambda ended with an error. Their logs:
+        /aws/lambda/novatrix-publisher and /aws/lambda/novatrix-site-check.
+      Metrics:
+        - Id: errors
+          Label: Lambda errors (publisher + site check)
+          Expression: FILL(publisher, 0) + FILL(sitecheck, 0)
+          ReturnData: true
+        - Id: publisher
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Errors
+              Dimensions: [{ Name: FunctionName, Value: !Sub "${ProjectName}-publisher" }]
+            Period: 300
+            Stat: Sum
+        - Id: sitecheck
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Errors
+              Dimensions: [{ Name: FunctionName, Value: !Ref SiteCheckFunction }]
+            Period: 300
+            Stat: Sum
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  SlowSiteAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-warning-slow-site"
+      AlarmDescription: >-
+        The start page has been slower than the threshold for 15 minutes (as a visitor sees it).
+        Slowest pages: Logs Insights query "2 slowest pages".
+      Namespace: Novatrix/SiteCheck
+      MetricName: ResponseTimeMs
+      Dimensions: [{ Name: Site, Value: !Ref ProjectName }]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref SlowSiteMs
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # ===========================================================================
+  # Central logging - follow-up: saved Logs Insights queries (CloudWatch ->
+  # Logs Insights -> Saved queries). They search ALL servers at once, also
+  # servers that no longer exist. The access log is JSON (layer 5), so the
+  # fields (ip, path, status, ms ...) are found without parsing.
+  # ===========================================================================
+  Query5xx:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "${ProjectName}/1 5xx requests"
+      LogGroupNames: [!Sub "/${ProjectName}/web/access"]
+      QueryString: |
+        fields @timestamp, @logStream as server, ip, method, path, status, ms
+        | filter status >= 500
+        | sort @timestamp desc
+        | limit 100
+  QuerySlowest:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "${ProjectName}/2 slowest pages"
+      LogGroupNames: [!Sub "/${ProjectName}/web/access"]
+      QueryString: |
+        stats count(*) as requests, avg(ms) as avg_ms, max(ms) as max_ms by path
+        | sort avg_ms desc
+        | limit 20
+  QueryVisitors:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "${ProjectName}/3 top visitors"
+      LogGroupNames: [!Sub "/${ProjectName}/web/access"]
+      QueryString: |
+        stats count(*) as requests by ip, ua
+        | sort requests desc
+        | limit 20
+  QueryErrors:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "${ProjectName}/4 errors on all servers"
+      LogGroupNames:
+        - !Sub "/${ProjectName}/web/error"
+        - !Sub "/${ProjectName}/web/php"
+        - !Sub "/${ProjectName}/web/jobs"
+        - !Sub "/${ProjectName}/web/boot"
+        - !Sub "/aws/rds/instance/${ProjectName}-db/error"
+      QueryString: |
+        fields @timestamp, @log, @logStream, @message
+        | filter @message like /(?i)(error|fatal|failed|denied)/
+        | sort @timestamp desc
+        | limit 100
+  QueryPerServer:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "${ProjectName}/5 requests per server"
+      LogGroupNames: [!Sub "/${ProjectName}/web/access"]
+      QueryString: |
+        stats count(*) as requests by @logStream, bin(5m)
+  QuerySiteCheck:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "${ProjectName}/6 site-check failures"
+      LogGroupNames: [!Ref SiteCheckLogGroup]
+      QueryString: |
+        fields @timestamp, url, status, ms, error
+        | filter ok = 0
+        | sort @timestamp desc
+        | limit 50
+
+  # ===========================================================================
+  # Dashboard: the whole solution on one page (3 dashboards are free).
+  # ===========================================================================
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Ref ProjectName
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              { "type": "alarm", "x": 0, "y": 0, "width": 24, "height": 4,
+                "properties": { "title": "Alarms (critical = mail on ALARM and OK)", "alarms": [
+                  "${SiteDownAlarm.Arn}", "${NoHealthyServersAlarm.Arn}", "${Site5xxAlarm.Arn}",
+                  "${WebCpuAlarm.Arn}", "${WebMemoryAlarm.Arn}", "${WebDiskAlarm.Arn}", "${DbStorageAlarm.Arn}",
+                  "${DbCpuAlarm.Arn}", "${DbMemoryAlarm.Arn}", "${UnhealthyServerAlarm.Arn}", "${AsgAtMaxAlarm.Arn}",
+                  "${EfsCreditsAlarm.Arn}", "${PhpFatalAlarm.Arn}", "${BackupFailedAlarm.Arn}",
+                  "${LambdaErrorsAlarm.Arn}", "${SlowSiteAlarm.Arn}" ] } },
+              { "type": "metric", "x": 0, "y": 4, "width": 8, "height": 6,
+                "properties": { "title": "Site check (visitor's view)", "region": "${AWS::Region}", "period": 300,
+                  "metrics": [
+                    [ "Novatrix/SiteCheck", "Available", "Site", "${ProjectName}", { "stat": "Minimum" } ],
+                    [ ".", "ResponseTimeMs", ".", ".", { "stat": "Average", "yAxis": "right" } ] ] } },
+              { "type": "metric", "x": 8, "y": 4, "width": 8, "height": 6,
+                "properties": { "title": "Load balancer", "region": "${AWS::Region}", "period": 60, "stat": "Sum",
+                  "metrics": [
+                    [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${Alb}" ],
+                    [ ".", "HTTPCode_Target_5XX_Count", ".", "." ],
+                    [ ".", "HTTPCode_ELB_5XX_Count", ".", "." ],
+                    [ ".", "HealthyHostCount", "TargetGroup", "${Tg}", "LoadBalancer", "${Alb}", { "stat": "Minimum", "yAxis": "right" } ] ] } },
+              { "type": "metric", "x": 16, "y": 4, "width": 8, "height": 6,
+                "properties": { "title": "Web servers: CPU, memory, disk (%)", "region": "${AWS::Region}", "period": 300,
+                  "yAxis": { "left": { "min": 0, "max": 100 } },
+                  "metrics": [
+                    [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${Asg}", { "stat": "Average", "label": "CPU (average)" } ],
+                    [ "CWAgent", "mem_used_percent", "AutoScalingGroupName", "${Asg}", { "stat": "Maximum", "label": "memory (worst server)" } ],
+                    [ "CWAgent", "disk_used_percent", "AutoScalingGroupName", "${Asg}", "path", "/", "fstype", "xfs", { "stat": "Maximum", "label": "disk / (worst server)" } ] ] } },
+              { "type": "metric", "x": 0, "y": 10, "width": 8, "height": 6,
+                "properties": { "title": "Auto Scaling group: servers", "region": "${AWS::Region}", "period": 60, "stat": "Average",
+                  "metrics": [
+                    [ "AWS/AutoScaling", "GroupDesiredCapacity", "AutoScalingGroupName", "${Asg}" ],
+                    [ ".", "GroupInServiceInstances", ".", "." ] ] } },
+              { "type": "metric", "x": 8, "y": 10, "width": 8, "height": 6,
+                "properties": { "title": "Database (RDS)", "region": "${AWS::Region}", "period": 300,
+                  "metrics": [
+                    [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${ProjectName}-db", { "stat": "Average" } ],
+                    [ ".", "FreeStorageSpace", ".", ".", { "stat": "Minimum", "yAxis": "right" } ],
+                    [ ".", "FreeableMemory", ".", ".", { "stat": "Minimum", "yAxis": "right" } ] ] } },
+              { "type": "metric", "x": 16, "y": 10, "width": 8, "height": 6,
+                "properties": { "title": "Shared storage (EFS) + Lambda", "region": "${AWS::Region}", "period": 300,
+                  "metrics": [
+                    [ "AWS/EFS", "BurstCreditBalance", "FileSystemId", "${Fs}", { "stat": "Minimum", "yAxis": "right" } ],
+                    [ "AWS/Lambda", "Errors", "FunctionName", "${ProjectName}-publisher", { "stat": "Sum" } ],
+                    [ ".", ".", ".", "${ProjectName}-site-check", { "stat": "Sum" } ] ] } },
+              { "type": "log", "x": 0, "y": 16, "width": 24, "height": 6,
+                "properties": { "title": "Requests per status code and server (last hour)", "region": "${AWS::Region}", "view": "table",
+                  "query": "SOURCE '/${ProjectName}/web/access' | stats count(*) as requests by status, @logStream | sort requests desc" } }
+            ]
+          }
+        - Alb: { "Fn::ImportValue": !Sub "${ProjectName}-AlbFullName" }
+          Tg:  { "Fn::ImportValue": !Sub "${ProjectName}-WebTargetGroupFullName" }
+          Asg: { "Fn::ImportValue": !Sub "${ProjectName}-AsgName" }
+          Fs:  { "Fn::ImportValue": !Sub "${ProjectName}-FileSystemId" }
+
+Outputs:
+  AlarmTopicArn:
+    Value: !Ref AlarmTopic
+  SiteCheckFunctionName:
+    Value: !Ref SiteCheckFunction
+  SiteCheckLogGroupName:
+    Value: !Ref SiteCheckLogGroup
+  DashboardName:
+    Value: !Ref Dashboard
+  SiteDownAlarmName:
+    Value: !Ref SiteDownAlarm
+  PhpFatalAlarmName:
+    Value: !Ref PhpFatalAlarm

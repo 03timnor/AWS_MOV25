@@ -1,0 +1,425 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Novatrix V48 - layer 3 of 6: security (IAM). Service roles for the web
+  server (incl. the CloudWatch agent), the uploader (role chaining), the
+  publisher and the site check, plus groups, policies and users for operations,
+  development and marketing. Least privilege everywhere.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: General }
+        Parameters: [ProjectName, SiteBucket]
+      - Label: { default: Users }
+        Parameters: [OpsUserName, DevUserName, MarketingUserName]
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: novatrix
+    AllowedPattern: '^[a-z][a-z0-9-]{1,20}$'
+  SiteBucket:
+    Type: String
+    Description: The project bucket (created in layer 4 - policies only need its name)
+  OpsUserName:        { Type: String, Default: anna.ops }
+  DevUserName:   { Type: String, Default: erik.dev }
+  MarketingUserName:      { Type: String, Default: maja.marketing }
+
+Resources:
+  # ===========================================================================
+  # Web server (reader) role - shared by EVERY server in the Auto Scaling group
+  #   S3:   read-only, and only the published static content (web/). It writes
+  #         NOTHING to S3 itself - logs and backups go through the uploader role.
+  #   Secrets Manager: read exactly the three project secrets (ARNs imported
+  #         from layer 2 - not a wildcard). The master password is only used at
+  #         boot, to create/update the WordPress DB user.
+  #   EFS:  mount and write - only through the WordPress access point.
+  #   CloudWatch agent: metrics ONLY in the namespace CWAgent (a hacked server
+  #         can't fake the site check's metrics), logs ONLY into the existing
+  #         /<project>/web/* groups (no creating, no deleting, no reading), and
+  #         read ONLY its own configuration parameter.
+  # ===========================================================================
+  Ec2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-web-ec2-role"
+      Description: Web server - WordPress on EFS, read static content in S3
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-web-ec2-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListPublishedSite
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:aws:s3:::${SiteBucket}"
+                Condition: { StringLike: { "s3:prefix": ["web/*"] } }
+              - Sid: ReadPublishedSite
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${SiteBucket}/web/*"
+              - Sid: AssumeUploaderRole
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-uploader-role"
+              - Sid: ReadProjectSecrets
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - Fn::ImportValue: !Sub "${ProjectName}-DbMasterSecretArn"
+                  - Fn::ImportValue: !Sub "${ProjectName}-DbAppSecretArn"
+                  - Fn::ImportValue: !Sub "${ProjectName}-WpAdminSecretArn"
+              - Sid: MountWordpressViaAccessPoint
+                Effect: Allow
+                Action: [elasticfilesystem:ClientMount, elasticfilesystem:ClientWrite]
+                Resource:
+                  Fn::ImportValue: !Sub "${ProjectName}-FileSystemArn"
+                Condition:
+                  StringEquals:
+                    "elasticfilesystem:AccessPointArn":
+                      Fn::ImportValue: !Sub "${ProjectName}-AccessPointArn"
+              - Sid: AgentMetricsOnlyOwnNamespace
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"                       # PutMetricData has no resource ARNs
+                Condition: { StringEquals: { "cloudwatch:namespace": CWAgent } }
+              - Sid: AgentShipLogsToWebGroups
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${ProjectName}/web/*:*"
+              - Sid: AgentReadOwnConfig
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/cloudwatch-agent/web"
+              - Sid: AgentFindOwnAutoScalingGroup
+                Effect: Allow
+                Action: ec2:DescribeTags            # the agent reads the aws:autoscaling:groupName tag
+                Resource: "*"
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${ProjectName}-web-ec2-profile"
+      Roles: [!Ref Ec2Role]
+
+  # ===========================================================================
+  # Uploader role: ONLY a session running with the web server's role may assume
+  # it (role chaining). Not the EC2 service, not users, not even administrators.
+  # Write-only, only logs/ and backup/: a hacked web server can add a backup
+  # but never read, list or delete the old ones.
+  # ===========================================================================
+  UploaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-uploader-role"
+      Description: Upload logs and backups - assumable only by the web server role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OnlyReaderRole
+            Effect: Allow
+            Principal: { AWS: !GetAtt Ec2Role.Arn }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-uploader-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: UploadLogsAndBackups
+                Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${SiteBucket}/logs/*"
+                  - !Sub "arn:aws:s3:::${SiteBucket}/backup/*"
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Publisher (Lambda) role: read drafts, write published files, log to its own
+  # log group. Nothing else - not even logs:CreateLogGroup (layer 4 creates it).
+  # ===========================================================================
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-publisher-role"
+      Description: Publisher - S3 drafts/ -> web/
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-publisher-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadDrafts
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${SiteBucket}/drafts/*"
+              - Sid: Publish
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${SiteBucket}/web/*"
+              - Sid: WriteOwnLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-publisher:*"
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Site check (Lambda, layer 6): asks the website from OUTSIDE like a visitor
+  # and reports to CloudWatch. It needs nothing in the VPC, S3 or IAM - only
+  # its own log group and metrics in its own namespace.
+  # ===========================================================================
+  SiteCheckRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-site-check-role"
+      Description: Site check - write metrics Novatrix/SiteCheck and its own logs, nothing else
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-site-check-access"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: MetricsOnlyOwnNamespace
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition: { StringEquals: { "cloudwatch:namespace": Novatrix/SiteCheck } }
+              - Sid: WriteOwnLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-site-check:*"
+      Tags:
+        - { Key: Project, Value: !Ref ProjectName }
+
+  # ===========================================================================
+  # Humans: permissions ONLY through groups - never directly on a user.
+  # No passwords or access keys are created here.
+  # ===========================================================================
+  OpsGroup:
+    Type: AWS::IAM::Group
+    Properties: { GroupName: !Sub "${ProjectName}-operations" }
+  DevGroup:
+    Type: AWS::IAM::Group
+    Properties: { GroupName: !Sub "${ProjectName}-development" }
+  MarketingGroup:
+    Type: AWS::IAM::Group
+    Properties: { GroupName: !Sub "${ProjectName}-marketing" }
+
+  # Operations: operate the project's servers (bastion start/stop, web servers
+  # through the Auto Scaling group: desired capacity, replace an instance, roll
+  # out new servers), read logs/metrics/network/database/EFS/load balancer setup
+  # and download backups (to restore). Monitoring: see every alarm, metric and
+  # dashboard, read and SEARCH (Logs Insights) all the project's logs. No
+  # content, no code, no network, database, load balancer or scaling-limit
+  # changes, no secrets, no stack changes - and no deleting or silencing alarms,
+  # no deleting logs, no unsubscribing from the alarm mails.
+  OpsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-operations-policy"
+      Groups: [!Ref OpsGroup]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadOnlyOverview
+            Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - ec2:DescribeInstanceStatus
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeSecurityGroupRules
+              - ec2:DescribeNetworkAcls
+              - ec2:DescribeVpcs
+              - ec2:DescribeSubnets
+              - ec2:DescribeRouteTables
+              - ec2:DescribeVpcEndpoints
+              - ec2:DescribeFlowLogs
+              - rds:DescribeDBInstances
+              - rds:DescribeDBSnapshots
+              - rds:DescribeDBSubnetGroups
+              - elasticfilesystem:DescribeFileSystems
+              - elasticfilesystem:DescribeMountTargets
+              - elasticfilesystem:DescribeAccessPoints
+              - cloudwatch:GetMetricData
+              - cloudwatch:GetMetricStatistics
+              - cloudwatch:ListMetrics
+              - logs:DescribeLogGroups
+              - cloudformation:DescribeStacks
+              - cloudformation:DescribeStackEvents
+              - cloudformation:DescribeStackResources
+              - autoscaling:DescribeAutoScalingGroups
+              - autoscaling:DescribeAutoScalingInstances
+              - autoscaling:DescribeScalingActivities
+              - autoscaling:DescribePolicies
+              - autoscaling:DescribeInstanceRefreshes
+              - elasticloadbalancing:DescribeLoadBalancers
+              - elasticloadbalancing:DescribeListeners
+              - elasticloadbalancing:DescribeTargetGroups
+              - elasticloadbalancing:DescribeTargetHealth
+              - ec2:DescribeLaunchTemplates
+              - ec2:DescribeLaunchTemplateVersions
+              - cloudwatch:DescribeAlarms
+              - cloudwatch:DescribeAlarmHistory
+              - cloudwatch:GetDashboard
+              - cloudwatch:ListDashboards
+              - logs:DescribeQueryDefinitions
+              - logs:GetQueryResults
+              - logs:StopQuery
+              - logs:DescribeMetricFilters
+              - sns:ListTopics
+            Resource: "*"
+          - Sid: ReadAndSearchCentralLogs
+            Effect: Allow
+            Action: [logs:DescribeLogStreams, logs:GetLogEvents, logs:FilterLogEvents, logs:StartQuery]
+            Resource:
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${ProjectName}/web/*:*"
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-*:*"
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/rds/instance/${ProjectName}-db/*:*"
+          # Within the limits in the template (min/max): add a server before a
+          # campaign, replace a sick one, roll out all servers again. Only the
+          # project's own group (tag), and never change min/max or the policies.
+          - Sid: OperateProjectAutoScalingGroup
+            Effect: Allow
+            Action:
+              - autoscaling:SetDesiredCapacity
+              - autoscaling:TerminateInstanceInAutoScalingGroup
+              - autoscaling:StartInstanceRefresh
+            Resource: !Sub "arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${ProjectName}-*"
+            Condition: { StringEquals: { "autoscaling:ResourceTag/Project": !Ref ProjectName } }
+          - Sid: ReadFlowLogs
+            Effect: Allow
+            Action: [logs:DescribeLogStreams, logs:GetLogEvents, logs:FilterLogEvents]
+            Resource: !Sub
+              - "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${Grupp}:*"
+              - Grupp:
+                  Fn::ImportValue: !Sub "${ProjectName}-FlowLogGroupName"
+          - Sid: ControlOnlyProjectInstances
+            Effect: Allow
+            Action: [ec2:StartInstances, ec2:StopInstances, ec2:RebootInstances]
+            Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+            Condition: { StringEquals: { "aws:ResourceTag/Project": !Ref ProjectName } }
+          - Sid: ReadPublisherLogs
+            Effect: Allow
+            Action: [logs:DescribeLogStreams, logs:GetLogEvents, logs:FilterLogEvents]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-publisher:*"
+          - Sid: ListLogsAndBackups
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::${SiteBucket}"
+            Condition: { StringLike: { "s3:prefix": ["logs/*", "backup/*"] } }
+          - Sid: ReadLogsAndBackups
+            Effect: Allow
+            Action: s3:GetObject
+            Resource:
+              - !Sub "arn:aws:s3:::${SiteBucket}/logs/*"
+              - !Sub "arn:aws:s3:::${SiteBucket}/backup/*"
+
+  # Development: upload any draft, read the published site, deploy publisher code.
+  # Can NOT write web/ directly - everything goes through the publisher's checks.
+  DevPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-development-policy"
+      Groups: [!Ref DevGroup]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListSite
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::${SiteBucket}"
+            Condition: { StringLike: { "s3:prefix": ["drafts/*", "web/*"] } }
+          - Sid: ManageDrafts
+            Effect: Allow
+            Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+            Resource: !Sub "arn:aws:s3:::${SiteBucket}/drafts/*"
+          - Sid: ReadPublishedSite
+            Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${SiteBucket}/web/*"
+          - Sid: DeployPublisherCode
+            Effect: Allow
+            Action: [lambda:GetFunction, lambda:UpdateFunctionCode]
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-publisher"
+          - Sid: ReadPublisherLogs
+            Effect: Allow
+            Action: [logs:DescribeLogStreams, logs:GetLogEvents, logs:FilterLogEvents]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-publisher:*"
+          - Sid: ListLogGroups
+            Effect: Allow
+            Action: logs:DescribeLogGroups
+            Resource: "*"
+
+  # Marketing: upload images to drafts/images/ only. Cannot delete, cannot touch pages.
+  MarketingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-marketing-policy"
+      Groups: [!Ref MarketingGroup]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ListOwnImages
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::${SiteBucket}"
+            Condition: { StringLike: { "s3:prefix": ["drafts/images/*"] } }
+          - Sid: UploadImages
+            Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource: !Sub "arn:aws:s3:::${SiteBucket}/drafts/images/*"
+
+  OpsUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Ref OpsUserName
+      Groups: [!Ref OpsGroup]
+      Tags: [{ Key: Project, Value: !Ref ProjectName }]
+  DevUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Ref DevUserName
+      Groups: [!Ref DevGroup]
+      Tags: [{ Key: Project, Value: !Ref ProjectName }]
+  MarketingUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Ref MarketingUserName
+      Groups: [!Ref MarketingGroup]
+      Tags: [{ Key: Project, Value: !Ref ProjectName }]
+
+Outputs:
+  Ec2RoleArn:
+    Value: !GetAtt Ec2Role.Arn
+    Export: { Name: !Sub "${ProjectName}-Ec2RoleArn" }
+  Ec2InstanceProfileName:
+    Value: !Ref Ec2InstanceProfile
+    Export: { Name: !Sub "${ProjectName}-Ec2InstanceProfileName" }
+  UploaderRoleArn:
+    Value: !GetAtt UploaderRole.Arn
+    Export: { Name: !Sub "${ProjectName}-UploaderRoleArn" }
+  LambdaRoleArn:
+    Value: !GetAtt LambdaRole.Arn
+    Export: { Name: !Sub "${ProjectName}-LambdaRoleArn" }
+  SiteCheckRoleArn:
+    Value: !GetAtt SiteCheckRole.Arn
+    Export: { Name: !Sub "${ProjectName}-SiteCheckRoleArn" }
