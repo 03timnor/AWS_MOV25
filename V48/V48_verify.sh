@@ -5,11 +5,11 @@
 # an Auto Scaling group in two AZs, RDS + EFS, backups, IAM, the network - and
 # the central monitoring and logging (CloudWatch, SNS e-mail, site check).
 #
-# Run:  ./V48_verify.sh                 everything that changes nothing (Del 0-7, 9)
-#       ./V48_verify.sh --failover      + Del 8.1: terminate a web server under traffic
-#       ./V48_verify.sh --selfheal      + Del 8.2: break a web server (Apache stopped)
-#       ./V48_verify.sh --load          + Del 8.3: load test -> the group scales out
-#       ./V48_verify.sh --alarmtest     + Del 8.4: the alarm chain with REAL mails (ALARM + OK)
+# Run:  ./V48_verify.sh                 everything that changes nothing (Del 0-8)
+#       ./V48_verify.sh --failover      + Del 9.1: terminate a web server under traffic
+#       ./V48_verify.sh --selfheal      + Del 9.2: break a web server (Apache stopped)
+#       ./V48_verify.sh --load          + Del 9.3: load test -> the group scales out
+#       ./V48_verify.sh --alarmtest     + Del 9.4: the alarm chain with REAL mails (ALARM + OK)
 #       ./V48_verify.sh --all           all four (about 40 minutes)
 #
 #   Del 0: CloudFormation - all six stacks complete, the template in AWS is
@@ -33,14 +33,15 @@
 #          a web server, and the VPC flow logs' own ACCEPT/REJECT records.
 #   Del 7: high availability - the ALB in two AZs, the Auto Scaling group
 #          (servers per AZ, health checks, scaling policies, rolling updates)
-#   Del 8: (opt-in, see Run) what happens when a server dies, breaks, or the
-#          load rises - measured from the outside, request by request - and
-#          whether an alarm really reaches the inbox.
-#   Del 9: monitoring and logging - the SNS subscription is confirmed, every
+#   Del 8: monitoring and logging - the SNS subscription is confirmed, every
 #          alarm mails (critical ones also on OK), CPU/memory/disk arrive from
 #          the agent, every server's logs are in CloudWatch and searchable
 #          (a request through the ALB is found again, Logs Insights), the
 #          metric filters, the database's error log, the site check (Lambda).
+#   Del 9: (opt-in, see Run, always LAST: it replaces servers and sets off
+#          alarms) what happens when a server dies, breaks, or the load rises
+#          - measured from the outside, request by request - and whether an
+#          alarm really reaches the inbox.
 #
 # All output is also saved to V48_verifiering_<date>.txt for the report.
 # =============================================================================
@@ -545,6 +546,12 @@ remote_check() {   # expected description command
 net_check() {   # expected description bastion|remote command
   local output got
   output=$(with_timeout 30 "$3" "($4) >/dev/null 2>&1 && echo __OPPEN__ || echo __STANGD__")
+  # Neither marker = the SSH session broke (e.g. "Connection reset by peer"),
+  # not a network verdict: try once more before calling it an error.
+  if [[ "$output" != *__OPPEN__* && "$output" != *__STANGD__* ]]; then
+    sleep 5
+    output=$(with_timeout 30 "$3" "($4) >/dev/null 2>&1 && echo __OPPEN__ || echo __STANGD__")
+  fi
   case "$output" in
     *__OPPEN__*)  got=ALLOW ;;
     *__STANGD__*) got=DENY ;;
@@ -1095,7 +1102,7 @@ else
 fi
 
 # =============================================================================
-echo; echo "=== Del 9: central monitorering och loggning (CloudWatch, SNS, site check) ==="
+echo; echo "=== Del 8: central monitorering och loggning (CloudWatch, SNS, site check) ==="
 # =============================================================================
 # Helpers: newest value of a metric over the last 15 minutes (empty if none),
 # an alarm's state, the deployed filter pattern of a log group.
@@ -1112,7 +1119,7 @@ TOPIC_ARN=$(stack_output AlarmTopicArn)
 if [[ -z "$TOPIC_ARN" ]]; then
   echo "Stacken $STACK_MONITORING saknas - hoppar över."
 else
-  echo "--- 9.1 Larmkanalen: SNS -> e-post ---"
+  echo "--- 8.1 Larmkanalen: SNS -> e-post ---"
   read -r sub_arn sub_to <<<"$(aws sns list-subscriptions-by-topic --region "$REGION" --topic-arn "$TOPIC_ARN" \
     --query "Subscriptions[?Protocol=='email'] | [0].[SubscriptionArn, Endpoint]" --output text 2>/dev/null)"
   echo "Ämne: $TOPIC_ARN  ->  e-post ${sub_to:-saknas}"
@@ -1120,7 +1127,7 @@ else
   record ALLOW "$got" "e-postprenumerationen är bekräftad (${sub_arn:-saknas})"
   [[ "$got" == DENY ]] && echo "     Klicka på länken i mejlet \"AWS Notification - Subscription Confirmation\" - annars levereras inga larm."
 
-  echo; echo "--- 9.2 Larmen (critical: mejl vid ALARM och OK, warning: mejl vid ALARM) ---"
+  echo; echo "--- 8.2 Larmen (critical: mejl vid ALARM och OK, warning: mejl vid ALARM) ---"
   cmp_sym() { case "$1" in GreaterThanOrEqualToThreshold) echo ">=" ;; GreaterThanThreshold) echo ">" ;;
               LessThanThreshold) echo "<" ;; LessThanOrEqualToThreshold) echo "<=" ;; *) echo "$1" ;; esac; }
   ALARMS=$(aws cloudwatch describe-alarms --region "$REGION" --alarm-name-prefix "${PROJECT}-" --alarm-types MetricAlarm \
@@ -1156,7 +1163,7 @@ else
     --query "AlarmHistoryItems[?starts_with(AlarmName, '${PROJECT}-')] | [:8].[Timestamp, AlarmName, HistorySummary]" \
     --output text 2>/dev/null | cut -c1-140 | sed 's/^/    /'
 
-  echo; echo "--- 9.3 CPU, minne och disk (CloudWatch-agenten ser inuti servrarna, EC2 bara utifrån) ---"
+  echo; echo "--- 8.3 CPU, minne och disk (CloudWatch-agenten ser inuti servrarna, EC2 bara utifrån) ---"
   if [[ "$SSH_OK" == yes ]]; then
     for ip in "$WEB_PRIV" ${WEB2_PRIV:+"$WEB2_PRIV"}; do
       st=$(remote_on "$ip" "systemctl is-active amazon-cloudwatch-agent" | tail -n1)
@@ -1180,7 +1187,7 @@ else
         --dimensions Name=AutoScalingGroupName,Value="$ASG" --query 'length(Metrics)' --output text 2>/dev/null)
   echo "    egna mätvärden från agenten: ${n:-0} st (per GRUPP, inte per server: samma larm oavsett vilka servrar som kör)"
 
-  echo; echo "--- 9.4 Central loggning: alla servrars loggar på ett ställe, sökbara ---"
+  echo; echo "--- 8.4 Central loggning: alla servrars loggar på ett ställe, sökbara ---"
   printf '    %-40s %-8s %-9s %s\n' LOGGRUPP LAGRING STRÖMMAR "SENASTE HÄNDELSE"
   no_ret=0
   for g in "${WEB_LOG_GROUPS[@]/#/$WEB_LOG_PREFIX/}" "$SITE_CHECK_LOG_GROUP" "$LOG_GROUP" "$DB_LOG_GROUP" "$FLOW_LOG_GROUP"; do
@@ -1262,7 +1269,7 @@ else
   [[ "$ex" == *error* ]] && got=ALLOW || got=DENY
   record ALLOW "$got" "databasens fellogg exporteras till CloudWatch Logs ($DB_LOG_GROUP)"
 
-  echo; echo "--- 9.5 Serverless: site check (Lambda, startas var 5:e minut av EventBridge) ---"
+  echo; echo "--- 8.5 Serverless: site check (Lambda, startas var 5:e minut av EventBridge) ---"
   read -r rstate rexpr <<<"$(aws events describe-rule --region "$REGION" --name "$SITE_CHECK_FUNCTION" \
     --query '[State, ScheduleExpression]' --output text 2>/dev/null)"
   record ENABLED "${rstate:-saknas}" "schemat ${rexpr:-?} är aktivt"
@@ -1299,7 +1306,7 @@ if [[ "$SSH_OK" == yes ]]; then
 fi
 
 # =============================================================================
-# Del 8 (opt-in): failure and load, measured from the outside
+# Del 9 (opt-in): failure and load, measured from the outside
 # =============================================================================
 # A poller asks the site for the start page through the ALB about every 1.5 s
 # and writes "<epoch> <http-code>" per request: the proof of what a visitor saw.
@@ -1420,12 +1427,12 @@ show_activities() {
 trap 'touch "$POLL_STOP" 2>/dev/null; kill $(jobs -p) 2>/dev/null' EXIT
 
 if [[ "$DO_FAILOVER$DO_SELFHEAL$DO_LOAD" == *yes* && ( -z "$ASG" || -z "$ALB_DNS" ) ]]; then
-  echo; echo "Del 8 hoppas över: stacken $STACK_COMPUTE saknas."
+  echo; echo "Del 9 hoppas över: stacken $STACK_COMPUTE saknas."
   DO_FAILOVER=no; DO_SELFHEAL=no; DO_LOAD=no; DO_ALARMTEST=no
 fi
 
 if [[ "$DO_FAILOVER" == yes ]]; then
-  echo; echo "=== Del 8.1: en webbserver försvinner (EC2 terminerar den hårt, under trafik) ==="
+  echo; echo "=== Del 9.1: en webbserver försvinner (EC2 terminerar den hårt, under trafik) ==="
   if wait_stable any "${REGION}a"; then
     victim=$VICTIM_ID
     echo "Offer: $victim i $VICTIM_AZ - termineras direkt i EC2 (inte via gruppen: ingen förvarning, ingen dränering)"
@@ -1444,7 +1451,7 @@ if [[ "$DO_FAILOVER" == yes ]]; then
 fi
 
 if [[ "$DO_SELFHEAL" == yes ]]; then
-  echo; echo "=== Del 8.2: en webbserver går sönder (Apache stoppas) - hälsokontroll + självläkning ==="
+  echo; echo "=== Del 9.2: en webbserver går sönder (Apache stoppas) - hälsokontroll + självläkning ==="
   if [[ -z "$BASTION_IP" || ! -f "$KEY_FILE" ]]; then
     echo "Hoppar över (behöver SSH via bastionen)."
   elif wait_stable old "${REGION}b"; then
@@ -1476,7 +1483,7 @@ if [[ "$DO_LOAD" == yes ]]; then
   own_dns=$(aws elbv2 describe-load-balancers --region "$REGION" --names "$ALB_NAME" \
               --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null)
   if [[ -z "$ALB_DNS" || "$own_dns" != "$ALB_DNS" || "$ALB_DNS" != *".${REGION}.elb.amazonaws.com" ]]; then
-    echo; echo "Del 8.3 hoppas över: '${ALB_DNS:-?}' är inte kontots egen lastbalanserare $ALB_NAME (${own_dns:-saknas})."
+    echo; echo "Del 9.3 hoppas över: '${ALB_DNS:-?}' är inte kontots egen lastbalanserare $ALB_NAME (${own_dns:-saknas})."
     DO_LOAD=no
   fi
 fi
@@ -1485,7 +1492,7 @@ if [[ "$DO_LOAD" == yes ]]; then
   LOAD_MINUTES=${LOAD_MINUTES:-8}; LOAD_WORKERS=${LOAD_WORKERS:-12}
   (( LOAD_WORKERS <= 30 && LOAD_MINUTES <= 15 )) || { echo "LOAD_WORKERS max 30, LOAD_MINUTES max 15"; exit 2; }
   echo "Mål: $SITE/  = $ALB_NAME i konto $ACCOUNT_ID ($REGION) - bara GET mot startsidan, ingen annan adress."
-  echo; echo "=== Del 8.3: lasttest - $LOAD_WORKERS parallella besökare i $LOAD_MINUTES minuter mot $SITE/ ==="
+  echo; echo "=== Del 9.3: lasttest - $LOAD_WORKERS parallella besökare i $LOAD_MINUTES minuter mot $SITE/ ==="
   wait_stable none ""
   start_desired=$(asg_field DesiredCapacity); max_desired=$start_desired; low=$start_desired; scaled=no
   echo "Före: önskat $start_desired servrar. Målvärden: $REQUESTS_PER_TARGET anrop/server/minut och ${CPU_TARGET}% CPU."
@@ -1524,7 +1531,7 @@ fi
 #       into its log -> CloudWatch agent -> log group -> metric filter ->
 #       alarm -> SNS -> ONE mail (warnings don't mail on OK).
 if [[ "$DO_ALARMTEST" == yes && -n "${TOPIC_ARN:-}" ]]; then
-  echo; echo "=== Del 8.4: larmkedjan - logg -> metrikfilter -> larm -> SNS -> mejl ==="
+  echo; echo "=== Del 9.4: larmkedjan - logg -> metrikfilter -> larm -> SNS -> mejl ==="
   mails_sent() {   # alarm since -> number of successful SNS actions
     aws cloudwatch describe-alarm-history --region "$REGION" --alarm-name "$1" --history-item-type Action \
       --start-date "$2" --query 'AlarmHistoryItems[].HistorySummary' --output text 2>/dev/null \
@@ -1544,18 +1551,29 @@ if [[ "$DO_ALARMTEST" == yes && -n "${TOPIC_ARN:-}" ]]; then
   record 2 "${n:-0}" "SNS skickade mejl för critical-larmet: ALARM + OK"
 
   PF_ALARM="${PROJECT}-warning-php-fatal"
-  if [[ "$SSH_OK" == yes ]]; then
+  # The servers chosen in Del 2 may be gone (Del 9.1-9.3 replace and add
+  # servers): take one that is in service NOW.
+  read -r PF_ID PF_AZ PF_PRIV _ <<<"$(web_instances | head -n 1)"
+  if [[ "$SSH_OK" != yes || -z "${PF_PRIV:-}" ]]; then
+    echo "    Hoppar över PHP-delen (ingen SSH via bastionen, eller ingen server i tjänst)."
+  else
+    # A REAL fatal error through the same path as a broken plugin: Apache ->
+    # PHP-FPM -> its error log. A one-line PHP file on EFS calls a function
+    # that doesn't exist; the file is removed again at once.
     fn="v48_larmtest_${STAMP}"
-    remote "sudo -u apache php -d log_errors=1 -d display_errors=0 -d error_log=/var/log/php-fpm/www-error.log -r '${fn}();'" >/dev/null
-    echo "    äkta PHP Fatal skrivet av PHP på $WEB_PRIV ($WEB_ID): Call to undefined function ${fn}()"
-    got=DENY
+    PF_FILE="v48-fatal-${STAMP}.php"
+    code=$(remote_on "$PF_PRIV" "echo '<?php ${fn}();' | sudo tee $WP_ROOT/$PF_FILE >/dev/null && curl -s -o /dev/null -w '%{http_code}' http://localhost/$PF_FILE; sudo rm -f $WP_ROOT/$PF_FILE" | tail -n 1)
+    echo "    PHP Fatal framkallat på $PF_PRIV ($PF_ID, $PF_AZ): /$PF_FILE anropar ${fn}() som inte finns -> HTTP ${code:-?}"
+    [[ "$code" == 500 ]] && got=ALLOW || got=DENY
+    record ALLOW "$got" "PHP-FPM svarar 500 på det trasiga skriptet (ett riktigt fatalt fel, HTTP ${code:-inget svar})"
+    got=DENY; line=""
     for i in $(seq 1 24); do
       line=$(aws logs filter-log-events --region "$REGION" --log-group-name "$WEB_LOG_PREFIX/php" \
                --start-time "$START_MS" --filter-pattern "\"$fn\"" --query 'events[0].message' --output text 2>/dev/null | grep -m1 'PHP')
       [[ "$line" == *"PHP Fatal"* ]] && { got=ALLOW; break; }
       sleep 5
     done
-    echo "    i loggen: ${line:-ingen träff}" | cut -c1-200
+    echo "    i loggen ($WEB_LOG_PREFIX/php, ström $PF_ID): ${line:-ingen träff}" | cut -c1-220
     record ALLOW "$got" "felet syns i den centrala loggen $WEB_LOG_PREFIX/php"
     echo "    väntar på larmet $PF_ALARM (metrikfilter -> 5-minutersperiod, upp till 10 min)..."
     st=""
