@@ -478,8 +478,8 @@ else
   record ALLOW "$got" "statiskt innehåll från S3 under $STATIC_URL_PATH/"
 fi
 
-TEST_OK="v47-test-${STAMP}.html"
-TEST_BAD="v47-test-${STAMP}.php"
+TEST_OK="v48-test-${STAMP}.html"
+TEST_BAD="v48-test-${STAMP}.php"
 echo "<p>Publicerad av V48-verifieringen ${STAMP}</p>" > "$WORK_DIR/$TEST_OK"
 echo "<?php echo 'ska aldrig publiceras'; ?>" > "$WORK_DIR/$TEST_BAD"
 aws s3 cp "$WORK_DIR/$TEST_OK"  "s3://$SITE_BUCKET/drafts/$TEST_OK"  --region "$REGION" --only-show-errors
@@ -505,7 +505,7 @@ record ALLOW "$got" "Lambdan skriver sin logg med sin egen roll (raden ovan)"
 # Even an administrator may NOT assume the uploader role: its trust policy
 # only names the EC2 reader role.
 echo
-if out=$(aws sts assume-role --role-arn "$UPLOADER_ROLE_ARN" --role-session-name v47-admin-test 2>&1); then
+if out=$(aws sts assume-role --role-arn "$UPLOADER_ROLE_ARN" --role-session-name v48-admin-test 2>&1); then
   got=ALLOW
 elif grep -qiE "AccessDenied|not authorized" <<<"$out"; then
   got=DENY
@@ -564,6 +564,17 @@ else
   [[ -n "$WEB2_PRIV" ]] && { remote_on "$WEB2_PRIV" true >/dev/null && got=ALLOW || got=DENY
     record ALLOW "$got" "SSH till webbservern i den andra AZ:n ($WEB2_PRIV, $WEB2_AZ) via bastionen"; }
   remote "true" >/dev/null && SSH_OK=yes
+  if [[ "$SSH_OK" == no ]]; then
+    # The most common cause: this computer's public IP changed since the deploy
+    # (the bastion only lets in AdminCidr - ONE address).
+    NOW_IP=$(curl -s -m 10 https://checkip.amazonaws.com | tr -d '[:space:]')
+    ADMIN_CIDR=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK_NETWORK" \
+      --query "Stacks[0].Parameters[?ParameterKey=='AdminCidr'].ParameterValue | [0]" --output text 2>/dev/null)
+    if [[ -n "$NOW_IP" && "$ADMIN_CIDR" != "$NOW_IP/32" ]]; then
+      echo "     ORSAK: din IP är nu $NOW_IP men bastionen släpper bara in $ADMIN_CIDR."
+      echo "     Kör ./V48_novatrix.sh (uppdaterar bara SG/NACL-reglerna, ingen server byts) och sedan verify igen."
+    fi
+  fi
 fi
 
 R="--region $REGION"
@@ -623,8 +634,8 @@ else
   remote_check ALLOW "WordPress-filerna ligger på EFS (wp-config.php, wp-includes/)" \
     "test -f $WP_ROOT/wp-config.php && test -d $WP_ROOT/wp-includes"
   remote_check ALLOW "access point: root på servern skriver som apache (uid 48) på EFS" \
-    "sudo touch $WP_ROOT/.v47-uid && u=\$(stat -c %u $WP_ROOT/.v47-uid); sudo rm -f $WP_ROOT/.v47-uid; [ \"\$u\" = 48 ]"
-  EFS_FILE="wp-content/uploads/v47-efs-${STAMP}.txt"
+    "sudo touch $WP_ROOT/.v48-uid && u=\$(stat -c %u $WP_ROOT/.v48-uid); sudo rm -f $WP_ROOT/.v48-uid; [ \"\$u\" = 48 ]"
+  EFS_FILE="wp-content/uploads/v48-efs-${STAMP}.txt"
   remote "echo 'V48 EFS-test $STAMP' | sudo tee $WP_ROOT/$EFS_FILE >/dev/null" >/dev/null
   # Shared storage across AZs: written on server 1, read on server 2 itself
   # (localhost - not through the ALB, which could pick server 1 again).
@@ -638,7 +649,7 @@ else
   fi
   grep -q "V48 EFS-test $STAMP" <<<"$(curl -s -m 10 "$SITE/$EFS_FILE")" && got=ALLOW || got=DENY
   record ALLOW "$got" "filen på EFS serveras genom lastbalanseraren (/$EFS_FILE)"
-  PHP_FILE="wp-content/uploads/v47-${STAMP}.php"
+  PHP_FILE="wp-content/uploads/v48-${STAMP}.php"
   remote "echo '<?php echo 6*7;' | sudo tee $WP_ROOT/$PHP_FILE >/dev/null" >/dev/null
   [[ "$(curl -s -m 10 "$SITE/$PHP_FILE")" == 42 ]] && got=ALLOW || got=DENY
   record DENY "$got" "PHP-kod i uppladdningsmappen körs (uppladdat skal)"
@@ -661,7 +672,7 @@ else
   remote_check ALLOW "WordPress-användaren läser sin databas ($DB_NAME.wp_posts)" \
     "$DBCLI -N -e 'SELECT COUNT(*) FROM $DB_NAME.wp_posts'"
   remote_check DENY  "WordPress-användaren skapar en annan databas" \
-    "$DBCLI -e 'CREATE DATABASE v47_intrang'"
+    "$DBCLI -e 'CREATE DATABASE v48_intrang'"
   remote_check DENY  "WordPress-användaren läser mysql.user (andra konton och lösenord)" \
     "$DBCLI -e 'SELECT user, host FROM mysql.user'"
 
@@ -1194,7 +1205,7 @@ else
   for i in $(seq 1 24); do
     hit=$(aws logs filter-log-events --region "$REGION" --log-group-name "$WEB_LOG_PREFIX/access" \
             --start-time "$START_MS" --filter-pattern "\"$LOG_MARK\"" \
-            --query 'events[0].[logStreamName, message]' --output text 2>/dev/null)
+            --query 'events[0].[logStreamName, message]' --output text 2>/dev/null | grep -m1 '^i-')
     [[ "$hit" == i-* ]] && { got=ALLOW; break; }
     sleep 5
   done
@@ -1222,9 +1233,12 @@ else
   aws logs get-query-results --region "$REGION" --query-id "${QID:-none}" --query 'results[*][*].value' \
     --output text 2>/dev/null | head -n 8 | sed 's/^/      /'
   record Complete "${st:-?}" "Logs Insights-fråga över accessloggen"
-  n=$(aws logs describe-query-definitions --region "$REGION" --query-definition-name-prefix "${PROJECT}/" \
-        --query 'length(queryDefinitions)' --output text 2>/dev/null)
-  record 6 "${n:-0}" "sparade Logs Insights-frågor (${PROJECT}/1-6) för uppföljning"
+  n=$(aws cloudformation describe-stack-resources --region "$REGION" --stack-name "$STACK_MONITORING" \
+        --query "length(StackResources[?ResourceType=='AWS::Logs::QueryDefinition' && ResourceStatus!='DELETE_COMPLETE'])" \
+        --output text 2>/dev/null)
+  record 6 "${n:-0}" "sparade Logs Insights-frågor i stacken (CloudWatch -> Logs Insights -> Saved queries)"
+  aws logs describe-query-definitions --region "$REGION" --query 'queryDefinitions[].name' --output text 2>/dev/null \
+    | tr '\t' '\n' | grep "^${PROJECT}/" | sort | sed 's/^/      /'
 
   # The deployed metric filters, tested against sample lines (changes nothing).
   mf_test() {   # log-group sample-that-must-match sample-that-must-not
@@ -1279,7 +1293,7 @@ for k in "drafts/$TEST_OK" "drafts/$TEST_BAD" "web/$TEST_OK"; do
 done
 rm -f -- "${WORK_DIR:?}/${TEST_OK:?}" "${WORK_DIR:?}/${TEST_BAD:?}"
 if [[ "$SSH_OK" == yes ]]; then
-  remote "sudo rm -f /var/www/static/$TEST_OK $WP_ROOT/wp-content/uploads/v47-*-${STAMP}.txt $WP_ROOT/wp-content/uploads/v47-${STAMP}.php" >/dev/null || true
+  remote "sudo rm -f /var/www/static/$TEST_OK $WP_ROOT/wp-content/uploads/v48-*-${STAMP}.txt $WP_ROOT/wp-content/uploads/v48-${STAMP}.php" >/dev/null || true
   [[ -n "$WEB2_PRIV" ]] && { remote_on "$WEB2_PRIV" "sudo rm -f /var/www/static/$TEST_OK" >/dev/null || true; }
   [[ -n "$POST_ID" ]] && { remote "$WPCLI post delete $POST_ID --force" >/dev/null || true; }
 fi
@@ -1437,7 +1451,10 @@ if [[ "$DO_SELFHEAL" == yes ]]; then
     victim=$VICTIM_ID; victim_ip=$VICTIM_IP
     echo "Offer: $victim ($victim_ip, $VICTIM_AZ) - instansen kör vidare, men webbservern svarar inte"
     poll_start; sleep 10
-    remote_on "$victim_ip" "sudo systemctl stop httpd" >/dev/null
+    if ! remote_on "$victim_ip" "sudo systemctl stop httpd" >/dev/null; then
+      poll_stop
+      record ALLOW ERROR "kunde inte stoppa Apache på $victim_ip (ingen SSH via bastionen) - testet hoppas över"
+    else
     t0=$SECONDS
     while [[ "$(target_state "$victim")" == healthy ]] && (( SECONDS - t0 < 180 )); do sleep 3; done
     st=$(target_state "$victim"); det=$(( SECONDS - t0 ))
@@ -1449,6 +1466,7 @@ if [[ "$DO_SELFHEAL" == yes ]]; then
     poll_report "trasig server"
     echo "    (eventuella fel ovan är anrop som hann gå till servern innan den underkändes: $hbad kontroller à ${hint}s)"
     show_activities 2
+    fi
   fi
 fi
 
@@ -1533,7 +1551,7 @@ if [[ "$DO_ALARMTEST" == yes && -n "${TOPIC_ARN:-}" ]]; then
     got=DENY
     for i in $(seq 1 24); do
       line=$(aws logs filter-log-events --region "$REGION" --log-group-name "$WEB_LOG_PREFIX/php" \
-               --start-time "$START_MS" --filter-pattern "\"$fn\"" --query 'events[0].message' --output text 2>/dev/null)
+               --start-time "$START_MS" --filter-pattern "\"$fn\"" --query 'events[0].message' --output text 2>/dev/null | grep -m1 'PHP')
       [[ "$line" == *"PHP Fatal"* ]] && { got=ALLOW; break; }
       sleep 5
     done
