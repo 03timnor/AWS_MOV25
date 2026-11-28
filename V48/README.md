@@ -8,7 +8,7 @@ Veckans uppgift går ut på att skapa central monitorering av CPU, minne disk oc
 
 För att uppnå Väl Godkänt nivå skall man provisionera infrastrukturen / miljön / (inklusive monitoreringen och larmen) som kod (*IaC*). Samt göra ett välgrundat och motiverat val av cloud native strategi och beskriva hur en del av lösningen skulle flyttas till containers eller serverless och vad det ger i skalbarhet, kostnad och drift.
 
-## 1. *__Skapa infrastrukturen / miljön med CloudFormation-mallar (Kod)__*
+## *__1. Skapa infrastrukturen / miljön med CloudFormation-mallar (Kod)__*
 
 ### *__V48_01-network.yaml__*
 
@@ -5834,7 +5834,7 @@ fi
 echo "Done. Recreate everything from the repo with: ./V48_novatrix.sh"
 ```
 
-## 2. *__Dokumentation__*
+## *__2. Dokumentation__*
 
 Hela miljön skapas från sex CloudFormation-mallar i `templates/` med `./V48_novatrix.sh`. Värden som varierar (namn, CIDR, storlekar, trösklar) sätts i `V48_config.sh`. Region: __eu-north-1 (Stockholm)__. Stackarna taggas `Project=novatrix`, och taggen följer med till resurserna.
 
@@ -6178,7 +6178,7 @@ __Redan serverless:__ publiceraren och site checken – korta, händelsestyrda j
 > *__OBS – hälsokontrollen kontrollerar inte databasen.__*
 > `/healthz.php` kontrollerar bara den enskilda servern: Apache, PHP och att WordPress-filerna finns
 > på EFS. En riktig WordPress-sida skulle kräva databasen (är RDS nere byts alla servrar ut i onödan)
-> och tar 3–4 s under last (uppmätt under V47) (friska servrar skulle underkännas). Databasfel löses inte genom att byta
+> och tar 3–4 s under last (uppmätt i V47), så friska servrar skulle underkännas. Databasfel löses inte genom att byta
 > servrar. Hela WordPress, inklusive databasen, kontrolleras i stället utifrån av site-checken
 > (Lambda) var 5:e minut – den larmar via `novatrix-critical-site-down` men byter inga servrar.
 
@@ -6213,8 +6213,8 @@ __Redan serverless:__ publiceraren och site checken – korta, händelsestyrda j
 
 ![alt text](pictures/all_alarms.png)
 
+De två `TargetTracking-…-AlarmLow` i ALARM tillhör Auto Scaling-gruppens skalning, inte projektets larm. De står i ALARM när lasten är låg och gruppen redan är på minimum (2 servrar), och e-post skickas inte.
+
 ![alt text](pictures/alarm.png)
 
 ![alt text](pictures/alarm_ok.png)
-
-De två `TargetTracking-…-AlarmLow` i ALARM tillhör Auto Scaling-gruppens skalning, inte projektets larm. De står i ALARM när lasten är låg och gruppen redan är på minimum (2 servrar), och e-post skickas inte.
