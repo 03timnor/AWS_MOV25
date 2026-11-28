@@ -5954,7 +5954,7 @@ __VPC flow logs:__ all trafik (ACCEPT + REJECT), 60 s aggregering, till `/novatr
 
 __Bastion:__ en EC2-instans (ingen ASG) i mgmt-a, publik IP, bastion-sg, __ingen IAM-roll__, samma AMI och instanstyp. sshd: inga lösenord, ingen root, vidarebefordrar bara port 22 (`PermitOpen *:22`).
 
-#### Schemalagda jobb på varje webbserver (systemd)
+#### *__Schemalagda jobb på varje webbserver (systemd)__*
 
 | Timer | När | Gör |
 |---|---|---|
