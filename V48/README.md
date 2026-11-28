@@ -4,9 +4,9 @@ Repository: https://github.com/03timnor/AWS_MOV25
 
 *Tim Noreliusson Lingestedt, 2026-11-28*
 
-Veckans uppgift går ut på att skapa central monitorering av *CPU*, minne disk och inloggning med *CloudWatch*, att utforska cloud native-strategier och hur delar av lösningen kan köras som *containers* eller *serverless*. Man skall kunna konfigurera monitoreringen och förklara varför den är viktig.
+Veckans uppgift går ut på att skapa central monitorering av CPU, minne disk och loggning med CloudWatch, att utforska cloud native-strategier och hur delar av lösningen kan köras som containers eller serverless. Man skall kunna konfigurera monitoreringen och förklara varför den är viktig.
 
-För att uppnå Väl Godkänt nivå skall man provisionera infrastrukturen / miljön som kod (*IaC*). Samt göra ett välgrundat och motiverat val av cloud native strategi och beskriva hur en del av lösningen skulle flyttas till *containers* eller *serverless* och vad det ger i skalbarhet, kostnad och drift.
+För att uppnå Väl Godkänt nivå skall man provisionera infrastrukturen / miljön / (inklusive monitoreringen och larmen) som kod (*IaC*). Samt göra ett välgrundat och motiverat val av cloud native strategi och beskriva hur en del av lösningen skulle flyttas till containers eller serverless och vad det ger i skalbarhet, kostnad och drift.
 
 ## 1. *__Skapa infrastrukturen / miljön med CloudFormation-mallar (Kod)__*
 
@@ -5851,7 +5851,7 @@ Hela miljön skapas från sex CloudFormation-mallar i `templates/` med `./V48_no
 
 Lagren driftsätts i ordning 1→6 och raderas i omvänd ordning (6→1). Varje lager exporterar sina id:n (`novatrix-<Nyckel>`) och nästa lager importerar dem.
 
-__Utanför CloudFormation (avsiktligt, skapas av skriptet):__ det självsignerade HTTPS-certifikatet (`novatrix-alb.invalid`, openssl, 365 dagar, importeras till ACM) och tömningen av VPC:ns default security group.
+__Utanför CloudFormation (avsiktligt, skapas av scriptet):__ det självsignerade HTTPS-certifikatet (`novatrix-alb.invalid`, openssl, 365 dagar, importeras till ACM) och tömningen av VPC:ns default security group.
 
 ### *__Nätverk__*
 
@@ -5883,7 +5883,7 @@ __VPC flow logs:__ all trafik (ACCEPT + REJECT), 60 s aggregering, till `/novatr
 | bastion-sg | tcp 22 från admin-IP /32 | tcp 22 till web-sg |
 | db-sg | tcp 3306 från web-sg | endast 127.0.0.1/32 (inget ut) |
 | efs-sg | tcp 2049 från web-sg | endast 127.0.0.1/32 (inget ut) |
-| default | – (tömd av skriptet) | – |
+| default | – (tömd av scriptet) | – |
 
 #### *__Network ACL:er (stateless, första träff gäller)__*
 
@@ -6012,7 +6012,7 @@ Jobbens utskrifter går till `/var/log/novatrix-jobs.log` och därifrån till Cl
 
 | Prefix | Innehåll | Skrivs av | Livscykel |
 |---|---|---|---|
-| `drafts/` | utkast | erik.dev, maja.marketing (bara `drafts/images/`), deploy-skriptet | – |
+| `drafts/` | utkast | erik.dev, maja.marketing (bara `drafts/images/`), deploy-scriptet | – |
 | `web/` | publicerat statiskt innehåll | bara publicerar-Lambdan | – |
 | `logs/` | Apache-loggarkiv | bara uppladdarrollen | raderas efter 30 dagar |
 | `backup/` | databasdumpar + wp-content | bara uppladdarrollen | raderas efter 14 dagar |
@@ -6036,7 +6036,7 @@ __Publicerar-Lambda__ (`novatrix-publisher`): Python 3.12, 128 MB, timeout 15 s.
 
 | Användare | Grupp | Får | Får inte |
 |---|---|---|---|
-| `anna.ops` | `novatrix-operations` | se allt (EC2, RDS, EFS, ALB, ASG, stackar, larm, dashboards) · starta/stoppa/starta om projektets instanser · ändra antal webbservrar inom min/max, byta en server, instance refresh · läsa och söka i projektets loggar (Logs Insights) · ladda ner loggar och backuper | ändra nätverk, databas, ALB, min/max, skalningspolicyer eller stackar · läsa hemligheter · radera eller tysta larm · avregistrera larmmejl · radera loggar |
+| `anna.ops` | `novatrix-operations` | se allt (EC2, RDS, EFS, ALB, ASG, stackar, larm, dashboards) · starta/stoppa/starta om projektets instanser · ändra antal webbservrar inom min/max, byta en server, instance refresh · läsa och söka i projektets loggar (Logs Insights) · ladda ner loggar och backuper | ändra nätverk, databas, ALB, min/max, skalningspolicyer eller stackar · läsa hemligheter · radera eller tysta larm · avregistrera larmmail · radera loggar |
 | `erik.dev` | `novatrix-development` | ladda upp/ändra/radera utkast · läsa `web/` · driftsätta ny publicerarkod · läsa publicerarens logg | skriva `web/` direkt · ändra Lambdans konfiguration/roll · läsa besöksloggar, backuper och hemligheter |
 | `maja.marketing` | `novatrix-marketing` | ladda upp och läsa bilder i `drafts/images/` | radera, ändra sidor, se resten av bucketen |
 
@@ -6060,9 +6060,9 @@ Inga lösenord eller åtkomstnycklar skapas för användarna.
 
 #### *__Larm (16 st) → SNS `novatrix-alarms` → e-post__*
 
-Alla larm mejlar vid ALARM. **Critical** mejlar även när de är OK igen.
+Alla larm mailar vid ALARM. __Critical__ mailar även när de är OK igen.
 
-| Larm | Mätvärde | Villkor | Saknad data | OK-mejl |
+| Larm | Mätvärde | Villkor | Saknad data | OK-mail |
 |---|---|---|---|---|
 | `novatrix-critical-site-down` | site check `Available` (min) | < 1 i 2 av 2 perioder à 5 min | = larm | ja |
 | `novatrix-critical-no-healthy-servers` | ALB `HealthyHostCount` (min) | < 1 i 2 perioder à 1 min | = larm | ja |
@@ -6081,7 +6081,7 @@ Alla larm mejlar vid ALARM. **Critical** mejlar även när de är OK igen.
 | `novatrix-warning-lambda-errors` | Lambda-fel publicerare + site check (summa) | ≥ 1 på 5 min | ignoreras | nej |
 | `novatrix-warning-slow-site` | site check `ResponseTimeMs` (snitt) | > 3000 ms i 3 perioder à 5 min | ignoreras | nej |
 
-Utöver dessa skapar target tracking 4 egna larm (`TargetTracking-novatrix-web-asg-…`) som bara skalar gruppen och inte mejlar. `AlarmLow`-larmen står normalt i ALARM när lasten är låg och gruppen är på minimum.
+Utöver dessa skapar target tracking 4 egna larm (`TargetTracking-novatrix-web-asg-…`) som bara skalar gruppen och inte mailar. `AlarmLow`-larmen står normalt i ALARM när lasten är låg och gruppen är på minimum.
 
 __SNS-ämne:__ `novatrix-alarms`, e-postprenumeration (måste bekräftas), får bara publiceras till av CloudWatch i det egna kontot och av kontot självt. Ingen KMS-kryptering (CloudWatch-larm kan inte publicera till ett ämne krypterat med `aws/sns`).
 
@@ -6132,7 +6132,7 @@ Agentens konfiguration ligger i SSM Parameter Store: `/novatrix/cloudwatch-agent
 | `novatrix-site-check` (`lambda/site-check.py`) | EventBridge-regeln `novatrix-site-check`, `rate(5 minutes)` | Python 3.12, 128 MB, timeout 60 s, utanför VPC:n | anropar sajten som en besökare: `/` (kräver `wp-content`), `/wp-login.php` (`user_login`), `/healthz.php` (`ok`), `/static/` (`Static content`) och `/` över HTTPS (när HTTPS är på) – skickar `Available` och `ResponseTimeMs` |
 | `novatrix-publisher` (inline i lager 4) | S3 `ObjectCreated` under `drafts/` | Python 3.12, 128 MB, timeout 15 s | kontrollerar och publicerar utkast till `web/` |
 
-Site checkens kod ligger både i `lambda/site-check.py` och inline i `V48_06-monitoring.yaml`. Deploy-skriptet stoppar om de skiljer sig åt.
+Site checkens kod ligger både i `lambda/site-check.py` och inline i `V48_06-monitoring.yaml`. Deploy-scriptet stoppar om de skiljer sig åt.
 
 ### *__Script__*
 
@@ -6150,13 +6150,13 @@ Site checkens kod ligger både i `lambda/site-check.py` och inline i `V48_06-mon
 - __Minne och disk syns inte utifrån:__ EC2 ser bara CPU, så CloudWatch-agenten mäter minne och disk inifrån. Mätvärdena gäller hela gruppen, så larmen fungerar oavsett vilka servrar som kör.
 - __Loggar måste kunna sökas över alla servrar:__ Bakom en lastbalanserare kan ett anrop hamna på vilken server som helst. Logs Insights söker i alla på en gång – loggarna visade bland annat skannrar som letade efter `/.env`.
 - __Besökarens perspektiv:__ Allt internt kan vara grönt medan sajten är trasig. Site checken kontrollerar sajten utifrån var 5:e minut.
-- __Kostnad och reaktion:__ Larm mejlar via SNS när kostnadstaket nås (max servrar) och vid fel. Critical-larm mejlar även när de är OK igen.
+- __Kostnad och reaktion:__ Larm mailar via SNS när kostnadstaket nås (max servrar) och vid fel. Critical-larm mailar även när de är OK igen.
 
 ### *__Monitoreringen som IaC (VG)__*
 
 - Allt ligger i CloudFormation: larm, SNS, site check, metrikfilter, sparade frågor och dashboard (lager 6), logggrupper och agentens konfiguration (lager 5) samt rättigheter (lager 3).
 - Övervakningen skapas och tas bort med resten av miljön. Trösklarna är parametrar i `V48_config.sh`.
-- Versionshanterat i Git. `V48_verify.sh` kontrollerar att AWS stämmer med repot (drift: `IN_SYNC`) och testar larmkedjan med riktiga mejl.
+- Versionshanterat i Git. `V48_verify.sh` kontrollerar att AWS stämmer med repot (drift: `IN_SYNC`) och testar larmkedjan med riktiga mail.
 
 ### *__Cloud native-strategi (VG)__*
 
@@ -6178,7 +6178,7 @@ __Redan serverless:__ publiceraren och site checken – korta, händelsestyrda j
 > *__OBS – hälsokontrollen kontrollerar inte databasen.__*
 > `/healthz.php` kontrollerar bara den enskilda servern: Apache, PHP och att WordPress-filerna finns
 > på EFS. En riktig WordPress-sida skulle kräva databasen (är RDS nere byts alla servrar ut i onödan)
-> och tar 3–4 s under last (friska servrar skulle underkännas). Databasfel löses inte genom att byta
+> och tar 3–4 s under last (uppmätt under V47) (friska servrar skulle underkännas). Databasfel löses inte genom att byta
 > servrar. Hela WordPress, inklusive databasen, kontrolleras i stället utifrån av site-checken
 > (Lambda) var 5:e minut – den larmar via `novatrix-critical-site-down` men byter inga servrar.
 
@@ -6216,3 +6216,5 @@ __Redan serverless:__ publiceraren och site checken – korta, händelsestyrda j
 ![alt text](pictures/alarm.png)
 
 ![alt text](pictures/alarm_ok.png)
+
+De två `TargetTracking-…-AlarmLow` i ALARM tillhör Auto Scaling-gruppens skalning, inte projektets larm. De står i ALARM när lasten är låg och gruppen redan är på minimum (2 servrar), och e-post skickas inte.
