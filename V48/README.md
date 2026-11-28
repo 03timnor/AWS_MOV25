@@ -6145,12 +6145,12 @@ Site checkens kod ligger både i `lambda/site-check.py` och inline i `V48_06-mon
 
 ### *__Varför central monitorering är väsentlig i en skalbar molnmiljö__*
 
-- __Servrarna är tillfälliga.__ Auto Scaling-gruppen startar och terminerar servrar själv (2 → 4 vid last, ersättning vid fel). Rotdisken raderas med servern, så loggar måste skickas centralt – efter testerna fanns loggar från 5 servrar, även borttagna.
-- __CPU styr skalningen.__ Target tracking håller CPU runt 50 %. Larmet på 80 % går bara igång när skalningen inte hinner med.
-- __Minne och disk syns inte utifrån.__ EC2 ser bara CPU, så CloudWatch-agenten mäter minne och disk inifrån. Mätvärdena gäller hela gruppen, så larmen fungerar oavsett vilka servrar som kör.
-- __Loggar måste kunna sökas över alla servrar.__ Bakom en lastbalanserare kan ett anrop hamna på vilken server som helst. Logs Insights söker i alla på en gång – loggarna visade bland annat skannrar som letade efter `/.env`.
-- __Besökarens perspektiv.__ Allt internt kan vara grönt medan sajten är trasig. Site checken kontrollerar sajten utifrån var 5:e minut.
-- __Kostnad och reaktion.__ Larm mejlar via SNS när kostnadstaket nås (max servrar) och vid fel. Critical-larm mejlar även när de är OK igen.
+- __Servrarna är tillfälliga:__ Auto Scaling-gruppen startar och terminerar servrar själv (2 → 4 vid last, ersättning vid fel). Rotdisken raderas med servern, så loggar måste skickas centralt – efter testerna fanns loggar från 5 servrar, även borttagna.
+- __CPU styr skalningen:__ Target tracking håller CPU runt 50 %. Larmet på 80 % går bara igång när skalningen inte hinner med.
+- __Minne och disk syns inte utifrån:__ EC2 ser bara CPU, så CloudWatch-agenten mäter minne och disk inifrån. Mätvärdena gäller hela gruppen, så larmen fungerar oavsett vilka servrar som kör.
+- __Loggar måste kunna sökas över alla servrar:__ Bakom en lastbalanserare kan ett anrop hamna på vilken server som helst. Logs Insights söker i alla på en gång – loggarna visade bland annat skannrar som letade efter `/.env`.
+- __Besökarens perspektiv:__ Allt internt kan vara grönt medan sajten är trasig. Site checken kontrollerar sajten utifrån var 5:e minut.
+- __Kostnad och reaktion:__ Larm mejlar via SNS när kostnadstaket nås (max servrar) och vid fel. Critical-larm mejlar även när de är OK igen.
 
 ### *__Monitoreringen som IaC (VG)__*
 
@@ -6173,7 +6173,7 @@ __Redan serverless:__ publiceraren och site checken – korta, händelsestyrda j
 - __Skalbarhet:__ en container startar på sekunder till en minut, mot 2,5–6 minuter för en ny EC2-server i våra tester.
 - __Drift:__ inga AMI:er att patcha, ingen bastion eller SSH, ingen gräns på 16 KB för user data. Rollback = föregående version.
 - __Kostnad:__ betalning per sekund för det som används. I lab-skala är t3.micro i gratisnivån dock billigare – vinsten ligger främst i minskad drift.
-- __Statiskt innehåll__ kan serveras direkt från S3 via CloudFront i stället för att synkas till varje server.
+- __Statiskt innehåll:__ kan serveras direkt från S3 via CloudFront i stället för att synkas till varje server.
 
 > *__OBS – hälsokontrollen kontrollerar inte databasen.__*
 > `/healthz.php` kontrollerar bara den enskilda servern: Apache, PHP och att WordPress-filerna finns
