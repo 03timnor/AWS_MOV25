@@ -2,7 +2,7 @@
 
 Repository: https://github.com/03timnor/AWS_MOV25
 
-*Tim Noreliusson Lingestedt, 2026-11-27*
+*Tim Noreliusson Lingestedt, 2026-11-28*
 
 Veckans uppgift går ut på att skapa central monitorering av *CPU*, minne disk och inloggning med *CloudWatch*, att utforska cloud native-strategier och hur delar av lösningen kan köras som *containers* eller *serverless*. Man skall kunna konfigurera monitoreringen och förklara varför den är viktig.
 
@@ -5836,6 +5836,345 @@ echo "Done. Recreate everything from the repo with: ./V48_novatrix.sh"
 
 ## 2. *__Dokumentation__*
 
+Hela miljön skapas från sex CloudFormation-mallar i `templates/` med `./V48_novatrix.sh`. Värden som varierar (namn, CIDR, storlekar, trösklar) sätts i `V48_config.sh`. Region: __eu-north-1 (Stockholm)__. Stackarna taggas `Project=novatrix`, och taggen följer med till resurserna.
+
+### *__Stackar (lager)__*
+
+| # | Stack | Mall | Innehåll | Resurser |
+|---|---|---|---|---|
+| 1 | `novatrix-network` | `V48_01-network.yaml` | VPC, 5 subnät, route tables, internet gateway, S3 gateway endpoint, 5 security groups, 3 NACL:er, VPC flow logs | 55 |
+| 2 | `novatrix-data` | `V48_02-data.yaml` | RDS MariaDB, EFS + access point + 2 mount targets, 2 hemligheter i Secrets Manager, logggrupp för databasens fellogg | 9 |
+| 3 | `novatrix-security` | `V48_03-security.yaml` | IAM: 4 tjänsteroller, instansprofil, 3 grupper, 3 policyer, 3 användare | 14 |
+| 4 | `novatrix-storage` | `V48_04-storage.yaml` | S3-bucket (policy, livscykel, trigger), publicerar-Lambda | 5 |
+| 5 | `novatrix-compute` | `V48_05-compute.yaml` | ALB + target group + lyssnare, launch template, Auto Scaling-grupp + 2 skalningspolicyer, 5 logggrupper, CloudWatch-agentens konfiguration, bastion | 16 |
+| 6 | `novatrix-monitoring` | `V48_06-monitoring.yaml` | SNS (e-post), site check (Lambda + EventBridge), 2 metrikfilter, 16 larm, 6 sparade Logs Insights-frågor, dashboard | 31 |
+
+Lagren driftsätts i ordning 1→6 och raderas i omvänd ordning (6→1). Varje lager exporterar sina id:n (`novatrix-<Nyckel>`) och nästa lager importerar dem.
+
+__Utanför CloudFormation (avsiktligt, skapas av skriptet):__ det självsignerade HTTPS-certifikatet (`novatrix-alb.invalid`, openssl, 365 dagar, importeras till ACM) och tömningen av VPC:ns default security group.
+
+### *__Nätverk__*
+
+| Subnät | CIDR | AZ | Typ | Route table | Innehåll |
+|---|---|---|---|---|---|
+| mgmt-a | 10.0.0.0/24 | eu-north-1a | publikt | publik | bastion |
+| web-a | 10.0.2.0/24 | eu-north-1a | publikt | publik | webbservrar, ALB-nod |
+| web-b | 10.0.3.0/24 | eu-north-1b | publikt | publik | webbservrar, ALB-nod |
+| data-a | 10.0.10.0/24 | eu-north-1a | privat | privat | RDS, EFS mount target |
+| data-b | 10.0.11.0/24 | eu-north-1b | privat | privat | EFS mount target (DB subnet group kräver 2 AZ) |
+
+VPC: `10.0.0.0/16`. Webbnivån = `10.0.2.0/23`, datanivån = `10.0.10.0/23`. Ingen publik IP tilldelas automatiskt (`MapPublicIpOnLaunch: false`).
+
+| Route table | Rutter |
+|---|---|
+| publik (mgmt-a, web-a, web-b) | 10.0.0.0/16 → local · 0.0.0.0/0 → internet gateway · S3 prefix list → gateway endpoint |
+| privat (data-a, data-b) | 10.0.0.0/16 → local (ingen väg till internet, ingen NAT) |
+
+__S3 gateway endpoint:__ släpper bara igenom projektets bucket och Amazon Linux paketförråd (`al2023-repos-eu-north-1-…`).
+
+__VPC flow logs:__ all trafik (ACCEPT + REJECT), 60 s aggregering, till `/novatrix/vpc-flow-logs`.
+
+#### *__Security groups (stateful)__*
+
+| Security group | In | Ut |
+|---|---|---|
+| alb-sg | tcp 80, 443 från 0.0.0.0/0 | tcp 80 till web-sg |
+| web-sg | tcp 80 från alb-sg · tcp 22 från bastion-sg · icmp typ 3 kod 4 (PMTUD) från 0.0.0.0/0 | tcp 443 till 0.0.0.0/0 · tcp 3306 till db-sg · tcp 2049 till efs-sg |
+| bastion-sg | tcp 22 från admin-IP /32 | tcp 22 till web-sg |
+| db-sg | tcp 3306 från web-sg | endast 127.0.0.1/32 (inget ut) |
+| efs-sg | tcp 2049 från web-sg | endast 127.0.0.1/32 (inget ut) |
+| default | – (tömd av skriptet) | – |
+
+#### *__Network ACL:er (stateless, första träff gäller)__*
+
+| NACL | Riktning | Regel | Port | Källa / mål |
+|---|---|---|---|---|
+| nacl-mgmt | IN | 100 ALLOW | 22 | admin-IP /32 |
+| | IN | 110 ALLOW | 32768–60999 | 10.0.2.0/23 |
+| | UT | 100 ALLOW | 1024–65535 | admin-IP /32 |
+| | UT | 110 ALLOW | 22 | 10.0.2.0/23 |
+| nacl-web | IN | 100 ALLOW | 80 | 0.0.0.0/0 |
+| | IN | 110 ALLOW | 443 | 0.0.0.0/0 |
+| | IN | 120 ALLOW | 22 | 10.0.0.0/24 |
+| | IN | 130 ALLOW | 32768–60999 | 0.0.0.0/0 |
+| | IN | 135 ALLOW | 1024–65535 | 10.0.2.0/23 |
+| | IN | 140 ALLOW | icmp typ 3 kod 4 | 0.0.0.0/0 |
+| | UT | 100 ALLOW | 1024–65535 | 0.0.0.0/0 |
+| | UT | 110 ALLOW | 443 | 0.0.0.0/0 |
+| | UT | 120 ALLOW | 3306 | 10.0.10.0/23 |
+| | UT | 130 ALLOW | 2049 | 10.0.10.0/23 |
+| | UT | 140 ALLOW | 80 | 10.0.2.0/23 |
+| nacl-data | IN | 100 ALLOW | 3306 | 10.0.2.0/23 |
+| | IN | 110 ALLOW | 2049 | 10.0.2.0/23 |
+| | UT | 100 ALLOW | 32768–60999 | 10.0.2.0/23 |
+| alla | IN/UT | * DENY | alla | 0.0.0.0/0 |
+
+### *__Beräkning (compute)__*
+
+#### *__Lastbalanserare och target group__*
+
+| Egenskap | Värde |
+|---|---|
+| ALB | `novatrix-alb`, application, internet-facing, IPv4, noder i web-a + web-b, alb-sg |
+| Lyssnare 80 | HTTP → target group |
+| Lyssnare 443 | HTTPS, `ELBSecurityPolicy-TLS13-1-2-2021-06` (TLS 1.2 + 1.3), självsignerat certifikat → target group (skapas bara när certifikatet finns) |
+| Attribut | ogiltiga headers släpps, desync-skydd `defensive`, idle timeout 60 s, deletion protection av |
+| Target group | `novatrix-web-tg`, HTTP 80, typ instance |
+| Hälsokontroll | `GET /healthz.php` var 15 s, timeout 5 s, frisk efter 2 OK, ur rotation efter 3 fel, kräver HTTP 200 |
+| Deregistration delay | 30 s |
+
+`/healthz.php` kontrollerar Apache, PHP och att WordPress-filerna finns på EFS – inte databasen.
+
+#### *__Auto Scaling-grupp__*
+
+| Egenskap | Värde |
+|---|---|
+| Namn | `novatrix-web-asg` |
+| Min / max | 2 / 4 (önskat antal sätts inte i mallen – skalningen bestämmer) |
+| Subnät | web-a + web-b (två AZ) |
+| Hälsokontroll | ELB, grace period 600 s |
+| Default instance warmup | 300 s |
+| Gruppmetrik | på, 1 minut |
+| Skalning (target tracking) | `ASGAverageCPUUtilization` runt 50 % · `ALBRequestCountPerTarget` runt 60 anrop/server/minut |
+| CreationPolicy | väntar på signal från 2 servrar, timeout 20 min |
+| Rolling update | 1 server i taget, minst 2 i tjänst, väntar på signal (max 20 min) |
+
+#### *__Launch template – webbservrar__*
+
+| Egenskap | Värde |
+|---|---|
+| AMI | Amazon Linux 2023 (väljs första gången och behålls, `NEW_AMI=1` byter) |
+| Instanstyp | t3.micro, CPU credits `standard` |
+| Nyckelpar | `AWS_MOV25` |
+| Metadata | IMDSv2 krävs, hop limit 1 |
+| Disk | gp3, krypterad, raderas med instansen (storlek enligt AMI) |
+| Nätverk | publik IP (bara för utgående trafik), web-sg |
+| IAM | instansprofil `novatrix-web-ec2-profile` (roll `novatrix-web-ec2-role`) |
+| Programvara | Apache, PHP-FPM, MariaDB-klient, amazon-efs-utils, CloudWatch-agenten, WP-CLI, WordPress |
+
+__Bastion:__ en EC2-instans (ingen ASG) i mgmt-a, publik IP, bastion-sg, __ingen IAM-roll__, samma AMI och instanstyp. sshd: inga lösenord, ingen root, vidarebefordrar bara port 22 (`PermitOpen *:22`).
+
+#### Schemalagda jobb på varje webbserver (systemd)
+
+| Timer | När | Gör |
+|---|---|---|
+| `novatrix-sync` | 2 min efter start, sedan var 30:e min | hämtar `web/` från S3 till `/var/www/static` |
+| `novatrix-logs` | dagligen | arkiverar Apache-loggarna till `s3://…/logs/<instans-id>/` via uppladdarrollen |
+| `novatrix-backup` | dagligen 00:00 UTC | databasdump + wp-content till `s3://…/backup/` – bara EN server per dygn (markering på EFS) |
+| `novatrix-wpcron` | 5 min efter start, sedan var 5:e min | WordPress schemalagda uppgifter (som apache) |
+
+Jobbens utskrifter går till `/var/log/novatrix-jobs.log` och därifrån till CloudWatch.
+
+### *__Data__*
+
+#### *__Databas (RDS)__*
+
+| Egenskap | Värde |
+|---|---|
+| Instans | `novatrix-db`, MariaDB, db.t4g.micro |
+| Lagring | 20 GiB gp2, krypterad i vila |
+| Placering | Single-AZ i eu-north-1a, subnet group data-a + data-b, ej publik, db-sg, port 3306 |
+| Databas / användare | `wordpress` · master `novatrixadmin` · app-användaren `wordpress` (bara databasen `wordpress`, bara från 10.0.2.0/23) |
+| Masterlösenord | hanteras av RDS i Secrets Manager (`rds!db-…`), roteras automatiskt |
+| Anslutning | TLS (RDS:s CA i servrarnas trust store, databasklienten verifierar servercertifikatet) |
+| Backup | automatisk, 1 dag, fönster 01:00–01:30 UTC, point-in-time restore |
+| Underhåll | söndag 02:00–02:30 UTC, automatiska minor-uppgraderingar |
+| Loggar | fellogg exporteras till `/aws/rds/instance/novatrix-db/error` |
+| Av | Performance Insights, Enhanced Monitoring, deletion protection |
+
+#### *__Delad lagring (EFS)__*
+
+| Egenskap | Värde |
+|---|---|
+| Filsystem | krypterat i vila, General Purpose, Bursting throughput, AWS Backup av |
+| Mount targets | data-a + data-b, efs-sg (varje server använder sin egen AZ) |
+| Access point | `/wordpress`, uid/gid 48 (apache), rättigheter 0755 |
+| Filsystemspolicy | kräver TLS, tillåter bara `novatrix-web-ec2-role` och bara via access point |
+| Montering | `/var/www/html` med `tls,iam,accesspoint` |
+
+#### *__Hemligheter (Secrets Manager)__*
+
+| Hemlighet | Skapas av | Innehåll |
+|---|---|---|
+| `novatrix/db/wordpress-password` | CloudFormation | 32 tecken, bokstäver + siffror |
+| `novatrix/wordpress/admin-password` | CloudFormation | 32 tecken, bokstäver + siffror |
+| `rds!db-…` | RDS | masteranvändare + lösenord, roteras automatiskt |
+
+### *__Lagring (S3) och publicering__*
+
+| Egenskap | Värde |
+|---|---|
+| Bucket | `novatrix-web-<konto-id>` |
+| Kryptering | SSE-S3 (AES256) |
+| Publik åtkomst | helt blockerad, Object Ownership `BucketOwnerEnforced` |
+| Bucket policy | nekar allt utan TLS · nekar webbserverns och uppladdarens roller utanför S3-endpointen |
+| Trigger | `ObjectCreated` under `drafts/` → publicerar-Lambdan |
+
+| Prefix | Innehåll | Skrivs av | Livscykel |
+|---|---|---|---|
+| `drafts/` | utkast | erik.dev, maja.marketing (bara `drafts/images/`), deploy-skriptet | – |
+| `web/` | publicerat statiskt innehåll | bara publicerar-Lambdan | – |
+| `logs/` | Apache-loggarkiv | bara uppladdarrollen | raderas efter 30 dagar |
+| `backup/` | databasdumpar + wp-content | bara uppladdarrollen | raderas efter 14 dagar |
+| alla | ofullständiga multipart-uppladdningar | – | avbryts efter 1 dag |
+
+__Publicerar-Lambda__ (`novatrix-publisher`): Python 3.12, 128 MB, timeout 15 s. Kopierar `drafts/` → `web/` om filtypen är tillåten (`.html .css .js .txt .svg .png .jpg .jpeg .webp .ico`) och filen är högst 5 MB. Allt annat avvisas och loggas.
+
+### *__Behörigheter (IAM)__*
+
+#### *__Tjänsteroller__*
+
+| Roll | Antas av | Får |
+|---|---|---|
+| `novatrix-web-ec2-role` | EC2 (webbservrarna) | läsa `web/` i S3 · läsa de 3 projekthemligheterna · montera EFS via access point · anta uppladdarrollen · CloudWatch-agenten: mätvärden i `CWAgent`, loggar till `/novatrix/web/*`, läsa sin SSM-parameter, `ec2:DescribeTags` |
+| `novatrix-uploader-role` | bara `novatrix-web-ec2-role` | `s3:PutObject` i `logs/` och `backup/` (inte läsa, lista eller radera) |
+| `novatrix-publisher-role` | Lambda (publiceraren) | läsa `drafts/`, skriva `web/`, logga till egen logggrupp |
+| `novatrix-site-check-role` | Lambda (site check) | mätvärden i `Novatrix/SiteCheck`, logga till egen logggrupp |
+| `novatrix-flow-log-role` | VPC flow logs (bara eget konto) | skriva till `/novatrix/vpc-flow-logs` (skapas i lager 1) |
+
+#### *__Människor (bara via grupper)__*
+
+| Användare | Grupp | Får | Får inte |
+|---|---|---|---|
+| `anna.ops` | `novatrix-operations` | se allt (EC2, RDS, EFS, ALB, ASG, stackar, larm, dashboards) · starta/stoppa/starta om projektets instanser · ändra antal webbservrar inom min/max, byta en server, instance refresh · läsa och söka i projektets loggar (Logs Insights) · ladda ner loggar och backuper | ändra nätverk, databas, ALB, min/max, skalningspolicyer eller stackar · läsa hemligheter · radera eller tysta larm · avregistrera larmmejl · radera loggar |
+| `erik.dev` | `novatrix-development` | ladda upp/ändra/radera utkast · läsa `web/` · driftsätta ny publicerarkod · läsa publicerarens logg | skriva `web/` direkt · ändra Lambdans konfiguration/roll · läsa besöksloggar, backuper och hemligheter |
+| `maja.marketing` | `novatrix-marketing` | ladda upp och läsa bilder i `drafts/images/` | radera, ändra sidor, se resten av bucketen |
+
+Inga lösenord eller åtkomstnycklar skapas för användarna.
+
+### *__Monitorering__*
+
+#### *__Mätvärden__*
+
+| Källa | Mätvärden | Dimension |
+|---|---|---|
+| EC2 (utifrån) | CPU | Auto Scaling-gruppen |
+| CloudWatch-agenten (inuti, var 60:e s) | `mem_used_percent`, `disk_used_percent` (`/`, xfs) | Auto Scaling-gruppen (inte per server) |
+| ALB | anrop, 5xx från servrar och ALB, friska/sjuka servrar | lastbalanserare, target group |
+| Auto Scaling | önskat antal, antal i tjänst | gruppen |
+| RDS | CPU, ledigt minne, ledig disk | `novatrix-db` |
+| EFS | burst-krediter | filsystemet |
+| Lambda | fel | `novatrix-publisher`, `novatrix-site-check` |
+| Site check | `Available` (1/0), `ResponseTimeMs` | `Site=novatrix` |
+| Metrikfilter | `PhpFatalErrors` (`"PHP Fatal"` i PHP-loggen), `BackupFailures` (`"novatrix-backup FAILED"` i jobbloggen) | – |
+
+#### *__Larm (16 st) → SNS `novatrix-alarms` → e-post__*
+
+Alla larm mejlar vid ALARM. **Critical** mejlar även när de är OK igen.
+
+| Larm | Mätvärde | Villkor | Saknad data | OK-mejl |
+|---|---|---|---|---|
+| `novatrix-critical-site-down` | site check `Available` (min) | < 1 i 2 av 2 perioder à 5 min | = larm | ja |
+| `novatrix-critical-no-healthy-servers` | ALB `HealthyHostCount` (min) | < 1 i 2 perioder à 1 min | = larm | ja |
+| `novatrix-critical-5xx-errors` | 5xx servrar + ALB (summa) | ≥ 10 på 5 min | ignoreras | ja |
+| `novatrix-critical-web-cpu` | EC2 CPU (snitt) | > 80 % i 3 perioder à 5 min | ignoreras | ja |
+| `novatrix-critical-web-memory` | `mem_used_percent` (max) | > 85 % i 2 perioder à 5 min | = larm | ja |
+| `novatrix-critical-web-disk` | `disk_used_percent` (max) | > 80 % i 2 perioder à 5 min | ignoreras | ja |
+| `novatrix-critical-db-storage` | RDS `FreeStorageSpace` (min) | < 2 GiB på 5 min | ignoreras | ja |
+| `novatrix-warning-db-cpu` | RDS CPU (snitt) | > 80 % i 3 perioder à 5 min | ignoreras | nej |
+| `novatrix-warning-db-memory` | RDS `FreeableMemory` (min) | < 100 MiB i 3 perioder à 5 min | ignoreras | nej |
+| `novatrix-warning-unhealthy-server` | ALB `UnHealthyHostCount` (max) | ≥ 1 i 3 perioder à 1 min | ignoreras | nej |
+| `novatrix-warning-at-max-servers` | `GroupInServiceInstances` (min) | ≥ 4 i 3 perioder à 5 min | ignoreras | nej |
+| `novatrix-warning-efs-burst-credits` | EFS `BurstCreditBalance` (min) | < 100 GB på 5 min | ignoreras | nej |
+| `novatrix-warning-php-fatal` | `PhpFatalErrors` (summa) | ≥ 1 på 5 min | ignoreras | nej |
+| `novatrix-warning-backup-failed` | `BackupFailures` (summa) | ≥ 1 på 5 min | ignoreras | nej |
+| `novatrix-warning-lambda-errors` | Lambda-fel publicerare + site check (summa) | ≥ 1 på 5 min | ignoreras | nej |
+| `novatrix-warning-slow-site` | site check `ResponseTimeMs` (snitt) | > 3000 ms i 3 perioder à 5 min | ignoreras | nej |
+
+Utöver dessa skapar target tracking 4 egna larm (`TargetTracking-novatrix-web-asg-…`) som bara skalar gruppen och inte mejlar. `AlarmLow`-larmen står normalt i ALARM när lasten är låg och gruppen är på minimum.
+
+__SNS-ämne:__ `novatrix-alarms`, e-postprenumeration (måste bekräftas), får bara publiceras till av CloudWatch i det egna kontot och av kontot självt. Ingen KMS-kryptering (CloudWatch-larm kan inte publicera till ett ämne krypterat med `aws/sns`).
+
+#### *__Dashboard `novatrix`__*
+
+| Ruta | Visar |
+|---|---|
+| Alarms | status för alla 16 larm |
+| Site check | `Available` och `ResponseTimeMs` |
+| Load balancer | anrop, 5xx (servrar + ALB), friska servrar |
+| Web servers | CPU (snitt), minne och disk (värsta servern) |
+| Auto Scaling group | önskat antal och antal i tjänst |
+| Database (RDS) | CPU, ledig disk, ledigt minne |
+| EFS + Lambda | burst-krediter, Lambda-fel |
+| Logg-tabell | Logs Insights: anrop per statuskod och server |
+
+### *__Central loggning (CloudWatch Logs)__*
+
+| Logggrupp | Innehåll | Källa | Lagring | Ägs av |
+|---|---|---|---|---|
+| `/novatrix/web/access` | varje anrop som JSON (time, ip, method, path, status, bytes, ms, ua), utan anrop till `/healthz.php` | agenten, en ström per instans | 14 d | compute |
+| `/novatrix/web/error` | Apaches fellogg | agenten | 14 d | compute |
+| `/novatrix/web/php` | PHP-FPM:s fellogg | agenten | 14 d | compute |
+| `/novatrix/web/jobs` | sync, logs, backup, wp-cron | agenten | 14 d | compute |
+| `/novatrix/web/boot` | uppstarten (cloud-init / user data) | agenten | 14 d | compute |
+| `/aws/rds/instance/novatrix-db/error` | databasens fellogg | RDS-export | 14 d | data |
+| `/aws/lambda/novatrix-site-check` | en JSON-rad per kontroll | site check | 14 d | monitoring |
+| `/aws/lambda/novatrix-publisher` | publicerade och avvisade filer | publiceraren | 7 d | storage |
+| `/novatrix/vpc-flow-logs` | släppt och blockerad nätverkstrafik | VPC flow logs | 7 d | network |
+
+Agentens konfiguration ligger i SSM Parameter Store: `/novatrix/cloudwatch-agent/web`. Apache-loggarna arkiveras dessutom till S3 (`logs/`, 30 dagar).
+
+#### *__Sparade Logs Insights-frågor__*
+
+| Fråga | Logggrupper | Visar |
+|---|---|---|
+| `novatrix/1 5xx requests` | access | anrop med status ≥ 500: tid, server, ip, metod, sökväg, ms |
+| `novatrix/2 slowest pages` | access | antal, snitt och max svarstid per sökväg |
+| `novatrix/3 top visitors` | access | antal anrop per ip och user agent |
+| `novatrix/4 errors on all servers` | error, php, jobs, boot, RDS-fellogg | rader med error, fatal, failed eller denied |
+| `novatrix/5 requests per server` | access | anrop per server och 5-minutersintervall |
+| `novatrix/6 site-check failures` | site check | misslyckade kontroller: url, status, ms, fel |
+
+### *__Serverless__*
+
+| Funktion | Startas av | Körmiljö | Gör |
+|---|---|---|---|
+| `novatrix-site-check` (`lambda/site-check.py`) | EventBridge-regeln `novatrix-site-check`, `rate(5 minutes)` | Python 3.12, 128 MB, timeout 60 s, utanför VPC:n | anropar sajten som en besökare: `/` (kräver `wp-content`), `/wp-login.php` (`user_login`), `/healthz.php` (`ok`), `/static/` (`Static content`) och `/` över HTTPS (när HTTPS är på) – skickar `Available` och `ResponseTimeMs` |
+| `novatrix-publisher` (inline i lager 4) | S3 `ObjectCreated` under `drafts/` | Python 3.12, 128 MB, timeout 15 s | kontrollerar och publicerar utkast till `web/` |
+
+Site checkens kod ligger både i `lambda/site-check.py` och inline i `V48_06-monitoring.yaml`. Deploy-skriptet stoppar om de skiljer sig åt.
+
+### *__Script__*
+
+| Script | Gör |
+|---|---|
+| `V48_config.sh` | gemensamma inställningar, körs inte själv (`ALARM_EMAIL` måste sättas) |
+| `V48_novatrix.sh` | driftsätter/uppdaterar alla sex stackar · `--plan` visar ändringar utan att ändra · `NEW_AMI=1` rullar ut senaste Amazon Linux |
+| `V48_verify.sh` | Del 0–8 ändrar inget · `--failover`, `--selfheal`, `--load`, `--alarmtest`, `--all` = Del 9.1–9.4 · sparar rapporten i `V48_verifiering_<datum>.txt` |
+| `V48_cleanup.sh` | raderar allt efter bekräftelse med `JA`: stackar 6→1 (tömmer bucketen först), certifikatet, kvarvarande hemligheter och logggrupper |
+
+### *__Varför central monitorering är väsentlig i en skalbar molnmiljö__*
+
+- __Servrarna är tillfälliga.__ Auto Scaling-gruppen startar och terminerar servrar själv (2 → 4 vid last, ersättning vid fel). Rotdisken raderas med servern, så loggar måste skickas centralt – efter testerna fanns loggar från 5 servrar, även borttagna.
+- __CPU styr skalningen.__ Target tracking håller CPU runt 50 %. Larmet på 80 % går bara igång när skalningen inte hinner med.
+- __Minne och disk syns inte utifrån.__ EC2 ser bara CPU, så CloudWatch-agenten mäter minne och disk inifrån. Mätvärdena gäller hela gruppen, så larmen fungerar oavsett vilka servrar som kör.
+- __Loggar måste kunna sökas över alla servrar.__ Bakom en lastbalanserare kan ett anrop hamna på vilken server som helst. Logs Insights söker i alla på en gång – loggarna visade bland annat skannrar som letade efter `/.env`.
+- __Besökarens perspektiv.__ Allt internt kan vara grönt medan sajten är trasig. Site checken kontrollerar sajten utifrån var 5:e minut.
+- __Kostnad och reaktion.__ Larm mejlar via SNS när kostnadstaket nås (max servrar) och vid fel. Critical-larm mejlar även när de är OK igen.
+
+### *__Monitoreringen som IaC (VG)__*
+
+- Allt ligger i CloudFormation: larm, SNS, site check, metrikfilter, sparade frågor och dashboard (lager 6), logggrupper och agentens konfiguration (lager 5) samt rättigheter (lager 3).
+- Övervakningen skapas och tas bort med resten av miljön. Trösklarna är parametrar i `V48_config.sh`.
+- Versionshanterat i Git. `V48_verify.sh` kontrollerar att AWS stämmer med repot (drift: `IN_SYNC`) och testar larmkedjan med riktiga mejl.
+
+### *__Cloud native-strategi (VG)__*
+
+__Redan serverless:__ publiceraren och site checken – korta, händelsestyrda jobb som passar Lambda.
+
+#### *__Nästa steg: WordPress till containrar på ECS Fargate:__*
+
+- *Inte Lambda:* WordPress körs hela tiden och läser och skriver filer – det passar inte korta, tillståndslösa anrop.
+- *Inte EKS:* Kubernetes är för stort och dyrt för en webbplats.
+- *Flytten:* en Dockerfile ersätter user data. ECS-tjänsten placeras bakom samma ALB, och EFS, RDS och Secrets Manager behålls. Loggar går till CloudWatch via `awslogs`, och skalningen sker med samma target tracking. Backup och wp-cron blir schemalagda tasks.
+
+#### *__Vad det ger:__*
+
+- __Skalbarhet:__ en container startar på sekunder till en minut, mot 2,5–6 minuter för en ny EC2-server i våra tester.
+- __Drift:__ inga AMI:er att patcha, ingen bastion eller SSH, ingen gräns på 16 KB för user data. Rollback = föregående version.
+- __Kostnad:__ betalning per sekund för det som används. I lab-skala är t3.micro i gratisnivån dock billigare – vinsten ligger främst i minskad drift.
+- __Statiskt innehåll__ kan serveras direkt från S3 via CloudFront i stället för att synkas till varje server.
+
 > *__OBS – hälsokontrollen kontrollerar inte databasen.__*
 > `/healthz.php` kontrollerar bara den enskilda servern: Apache, PHP och att WordPress-filerna finns
 > på EFS. En riktig WordPress-sida skulle kräva databasen (är RDS nere byts alla servrar ut i onödan)
@@ -5848,13 +6187,13 @@ echo "Done. Recreate everything from the repo with: ./V48_novatrix.sh"
 > varje server. Verifieringen testar den, site-checken kontrollerar att `/static/` svarar, och
 > innehållet finns i repository.
 
-## 3. *__Verifiering__*
+## *__3. Verifiering__*
 
 ### *__Webbsida:__*
 
 ![alt text](pictures/website.png)
 
-### *__Stacks:__*
+### *__Stackar:__*
 
 ![alt text](pictures/stacks.png)
 
